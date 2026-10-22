@@ -112,9 +112,18 @@ pruebas offscreen no bastan para comprobar este caso.
 Las exportaciones WAV y stems se generan en el directorio privado de exportación.
 `File > Share Exported WAV` abre el selector de compartir de Android mediante
 FileProvider y un permiso de lectura temporal. La selección de una carpeta SAF
-para exportar directamente no está implementada. La importación automática de
-MINIGSF vecinos de un GSFLIB SAF aislado no puede recorrer la carpeta del proveedor;
-preferir un ZIP con el conjunto completo o importación manual.
+para exportar directamente no está implementada.
+
+Desde 1.0.7 se pueden seleccionar **un GSFLIB y sus MINIGSF juntos** en Abrir
+ROM/GSF mediante selección múltiple. Si se abre sólo el GSFLIB, responder **Yes**
+a la importación abre otro selector para sus MINIGSF o un ZIP; **No** carga la
+biblioteca sin playlist. También existe Profile > Import GSF Playlist. Los
+nombres originales se conservan en directorios privados separados por URI;
+las copias y el análisis de las playlists se ejecutan fuera del hilo de interfaz.
+Un ZIP con el conjunto completo sigue siendo compatible. No se enumeran vecinos
+de un documento SAF aislado ni se piden permisos generales de almacenamiento.
+Consulta [GSFLIB y MINIGSF](GSF-ANDROID.md) para la causa del error de pistas cero,
+las asociaciones `_lib`, las pruebas y los límites del formato soportado.
 
 ## Pruebas reproducibles
 

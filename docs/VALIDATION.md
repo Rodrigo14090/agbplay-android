@@ -1,5 +1,62 @@
 # Validación de la entrega
 
+## GSFLIB y MINIGSF (octava entrega)
+
+[Descargar APK 1.0.7 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39789875750/artifacts/12430936917)
+
+- Commit exacto compilado: `cf544e9529d2edbe9bd581b3c021080766fe37ae` (workflow push y artefacto del mismo SHA).
+- SHA-256 del APK: `5f8085078b7e6833c9d86bb141ebb21075fbdd3a08c9bda21985b352c4288e8e`.
+- `org.agbplay.android`, `1.0.7-android-dev`, versionCode **8**; mínimo API 28, target API 35, compile SDK 36.
+- Firma de desarrollo APK v2 verificada, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- Qt Multimedia 6.11.2, NDK 27.2.12479018, código nativo Release.
+- [Construcción y regresión](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39789875750).
+- [Investigación, uso y límites](GSF-ANDROID.md); [instrucciones de construcción](ANDROID.md).
+
+La regresión del port rechazaba cualquier `PlayerInfo.maxTracks == 0`. El
+escáner oficial permite slots vacíos en GSF; el contador se leía correctamente
+de la tabla y se conservaba al aplicar el perfil. Se reproducía el mismo error
+antes de reproducir, tanto con Yes como con No en la importación. Se conservan
+los ceros e índices y se validan por separado las capacidades y las canciones
+que usan esos slots. No se sustituye el contador por un número arbitrario.
+
+Se ejecutó el motor oficial sin modificar (`0b87da48d2502da359e45718eec8566ac40fa9d7`)
+con el mismo GSFLIB sintético legal: detecta 32 slots (incluido relleno), los dos
+primeros con capacidades 0/16, y produce PCM no nulo (energía izquierda 167.574
+en 100 microbloques). `scripts/test-gsf-reference.sh` reproduce la comparación.
+El usuario confirma que su conjunto real funciona en el escritorio oficial;
+no se ha ejecutado aquí ese conjunto, que no está disponible en el entorno.
+
+Android permite seleccionar el GSFLIB y varios MINIGSF juntos, o elegir éstos
+al responder Yes después de inicializar el motor. No inicia un recorrido de la
+carpeta de caché buscando documentos vecinos. La copia SAF conserva nombres en
+directorios separados por URI. Copia y análisis de MINIGSF se hacen en segundo
+plano con cancelación entre archivos y publicación transaccional para el perfil
+vigente. La reconstrucción/escaneo de la ROM principal conserva su ruta Qt
+existente; no se afirma que esa fase completa sea asincrónica.
+
+Verificación local del código compilado:
+
+- Escritorio Qt: **7/7 CTest**, incluidas reproducción GBA, paridad de remuestreo,
+  trabajador/FIFO y GSFLIB. La prueba GUI ejerce Yes/No, playlist, error y reapertura,
+  cancelación y respuesta de temporizadores durante un proveedor lento simulado.
+- GSFLIB con ASan/UBSan/LeakSanitizer: **1/1**, sin supresiones.
+- GUI con ASan/UBSan/LeakSanitizer: **1/1**, con la única supresión conocida de
+  `QScroller::grabGesture` de Qt 6.8.2; no se suprimen errores de agbplay.
+- Clang NDK ARM64: comprobación sintáctica del probe Qt con las cabeceras nuevas.
+
+CI comprueba por separado el motor normal y sanitizado, la GUI Linux, SAF con
+ContentResolver en emulador Android API 35 y los cuatro casos de botones/toques
+Android. El APK ARM64 se construye y su firma/ABI se validan en ese mismo workflow.
+Las pruebas SAF son **7/7** y las de copia Java **7/7**. No se confunde el emulador
+x86_64 con una reproducción GSFLIB en un teléfono ARM64 físico.
+
+El usuario confirma que la corrección anterior eliminó los underruns observados
+con GBA. Esta entrega no cambia `PlaybackEngine`, `AudioFrameQueue`, `QAudioSink`,
+la política PCM ni los remuestreadores. Sigue pendiente instalar este APK en el
+teléfono y verificar el conjunto real: Yes y No, selección múltiple/ZIP, títulos,
+cambios de canción, reproducción continuada y cierre/reapertura. No hay un
+dispositivo Android físico conectado al entorno.
+
 ## Menús Android y barra nativa (séptima entrega)
 
 [Descargar APK 1.0.6 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39781877957/artifacts/12426209165)
