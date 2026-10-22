@@ -120,6 +120,9 @@ El intervalo entre bloques incluye la espera deliberada; **no** es el coste de
 síntesis. La medida antigua `max synth` incluía también visualización y publicación;
 la nueva los separa. Los contadores se reinician al consultar cada ventana. No se
 mide el contador de xruns interno de AAudio porque Qt no lo expone públicamente.
+Son tiempos transcurridos con reloj monotónico, que también pueden incluir
+preempción dentro de una llamada: «síntesis pura» delimita `m4aSoundMain`, no es una
+medida de tiempo CPU ni prueba un gobernador o una frecuencia de CPU concretos.
 
 ## Pruebas y límites
 

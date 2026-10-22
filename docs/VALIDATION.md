@@ -1,5 +1,73 @@
 # Validación de la entrega
 
+## Reserva temporal de PCM y corrección de underruns (quinta entrega)
+
+[Descargar APK 1.0.4 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126/artifacts/12424300526)
+
+- Commit exacto del APK: `50f5949af673b21ff4a090bf9555a0a5eb3f462a`.
+- SHA-256 del APK: `64467adfee7a185e51b9bbfe0bd50ad586322d4e83aeb319475def964a841c29`.
+- Firma APK v2 válida, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- `org.agbplay.android`, versionName `1.0.4-android-dev`, versionCode **5**; mínimo API 28, target API 35 y compile SDK 36.
+- Qt Multimedia 6.11.2, NDK 27.2.12479018, código nativo Release y paquete de desarrollo firmado.
+- [Workflow de construcción y regresión](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126).
+- [Informe CI sanitizado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126/artifacts/12424245497) (incluye resultados completos de las pruebas de audio).
+
+El usuario confirmó numerosos underruns físicos de 1.0.3 con callbacks de 96
+frames a 48 kHz. La política limitaba la reserva a dos callbacks (192 frames,
+4 ms) y dormía 1 ms sin garantizar cuándo volvería a ejecutarse. El motor genera
+microbloques de 200 frames y las demoras del productor medidas en el teléfono
+llegaban a 10,14 ms. Aumentar la prioridad no cambiaba ese presupuesto insuficiente.
+
+Android ahora mantiene como mínimo 30 ms de PCM, precarga antes de abrir/reanudar
+el dispositivo y repone por lotes desde un umbral de 25 ms con plazos monotónicos
+calculados. La capacidad física del FIFO sigue siendo 32768 frames; la síntesis
+conserva sus microbloques y los remuestreadores originales. El productor no espera
+por el mutex de copia del visualizador. El cierre evita notificaciones perdidas;
+el dispositivo deja de consumir antes de suspender la síntesis. El callback copia
+la captura PCM para analizar RMS/clipping fuera de tiempo real. Se miden objetivos,
+pico del productor, frecuencia de callbacks y retraso de despertar por separado.
+
+Comprobado localmente sobre el código final:
+
+| Comprobación | Resultado |
+| --- | --- |
+| Linux normal con GUI y motor | 6/6 CTest; trabajador sin UI: 1423 callbacks, 0 underruns / missing frames, mínimo 1048 frames, pico 1632 |
+| Motor ASan/UBSan/LeakSanitizer | 5/5, sin supresiones; repetición final de audio 2/2, sin errores de memoria |
+| ThreadSanitizer de trabajador/FIFO | 2/2, sin carreras; ejecución instrumentada fuera del presupuesto temporal, no certifica continuidad |
+| Simulación: 96 frames / 48 kHz, bloques 64–1024, tardanza 10 ms y picos de trabajo 5 ms | 0 underruns con reserva 30 ms para cada tamaño |
+| Simulación de 600 s con tardanza 15 ms | 300000 callbacks, 0 underruns |
+| Ensayo de reservas de 20 y 40 ms con bloques 200 y tardanza 10 ms | 20 ms: 3 underruns / 120 frames ausentes; 40 ms: 0 |
+| Sobrecarga de 45 ms o síntesis permanente de 200 frames cada 5 ms | Pérdidas detectadas/contadas; conservación del orden de PCM y recuperación |
+| PCM directo frente a FIFO/callback, SINC/BLEP/BLAMP | Diferencia máxima de muestra 0, bit a bit; RMS y pico idénticos por resampler |
+
+Los datos de transportes PCM sintéticos fueron: SINC RMS `0.0375162`, pico
+`0.371804`; BLEP RMS `0.0374493`, pico `0.362582`; BLAMP RMS `0.0373691`, pico
+`0.332435`. No son una comparación ARM64 contra x86 de la ROM del usuario ni
+una medición acústica. El medidor se verifica además con un seno de RMS conocido,
+ceros con signo, subnormales, NaN/Inf y floats finitos extremos.
+
+Las pruebas con hilos reales no tienen un planificador de tiempo real garantizado:
+una repetición cloud superó 195 ms de retraso. La simulación exige cero pérdidas
+con retrasos acotados; el trabajador exige continuidad si sus demoras observadas
+caben en el presupuesto y siempre verifica datos/ciclo de vida. La última prueba
+ThreadSanitizer registró 118 underruns / 9664 frames ausentes mientras la síntesis
+máxima llegó a 13,82 ms (para microbloques de 4,17 ms de audio). Estos máximos son
+tiempo transcurrido e incluyen posibles preempciones, no miden coste CPU medio.
+Pasar ThreadSanitizer
+significa que no detectó carreras en esos caminos, no que el sonido instrumentado
+fuera estable en tiempo real. La última prueba normal y la ASan dieron 0 pérdidas.
+
+El motor `src/agbplay` no cambia frente a 1.0.3. Las modificaciones están en el
+transporte/planificación de `agbplay-util`, telemetría, pruebas, versión y
+construcción/documentación. No se cambian perfiles, remuestreadores ni ganancia.
+
+No hay teléfono conectado en este entorno. **El criterio de cero underruns en
+Android real permanece pendiente.** Probar 60–120 s sin tocar con la misma ROM,
+perfil y configuración; recoger las líneas `Android audio`, `Android timing`
+y `Android PCM`. Si los contadores de cola quedan a cero pero persiste distorsión,
+comprobar aparte la salida float exportada y la salida física hasta AAudio.
+Ver [análisis completo, política y reproducción de pruebas](AUDIO-ANDROID.md).
+
 ## Prioridad del productor, telemetría y APK ARM64 (cuarta entrega)
 
 [Descargar APK 1.0.3 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39726795680/artifacts/12403139872)
