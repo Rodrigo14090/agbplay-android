@@ -1,5 +1,99 @@
 # Validación de la entrega
 
+## Reproducción en segundo plano (décima entrega)
+
+[Descargar APK 1.0.9 ARM64 firmado (ZIP de distribución)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39838581300/artifacts/12452790852)
+
+- Commit exacto compilado: `699de7621a8ef8bc8425fd88107dea6019b7993a` (workflow push y artefacto del mismo SHA).
+- SHA-256 del APK: `0ed96f16e06accd433fba3e2bfad709d137839acae9f18203ec34ceb19d56469`.
+- `org.agbplay.android`, `1.0.9-android-dev`, versionCode **10**; mínimo API 28, target API 35, compile SDK 36.
+- Firma de desarrollo APK v2 verificada, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- Qt Multimedia 6.11.2 y NDK 27.2.12479018, código nativo Release.
+- [Construcción y pruebas del APK](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39838581300).
+- [Uso, arquitectura, permisos y límites](BACKGROUND-AUDIO.md); [reconstrucción](ANDROID.md).
+
+El usuario solicitó seguir escuchando al minimizar y apagar la pantalla. Había
+dos impedimentos: MainWindow suspendía explícitamente el audio al perder
+ApplicationActive y Qt bloqueaba su dispatcher al detenerse la Activity. Ahora
+se mantiene el event loop mediante el metadato oficial de Qt y un servicio
+foreground Android de tipo mediaPlayback gestiona notificación, MediaSession,
+foco y un bloqueo parcial de CPU durante la reproducción. No se mantiene la
+pantalla encendida ni se añaden permisos generales de almacenamiento.
+
+Play se confirma al hilo Qt después de iniciar foreground y obtener foco.
+Pausa y pérdida de foco suspenden el transporte; la pérdida temporal permite
+reanudar, mientras que la permanente y la desconexión de auriculares anulan esa
+reanudación automática. Stop/cierre/error liberan el servicio y sus recursos.
+El servicio pausado libera la CPU y caduca tras un plazo nominal de cinco minutos,
+conservando la posición del motor para reanudar desde la app. No se promete
+reinicio tras la muerte del proceso; salir o quitar la tarea detiene la música.
+
+El foco dejó de gestionarse mediante un sondeo del backend. QAudioSink conserva
+el callback float32 estéreo original. MP2K/M4A, SINC/BLEP/BLAMP y la reserva normal
+de 30 ms no cambian. Para Stop y cambios de canción con salida suspendida, el
+FIFO usa un marcador de descarte aplicado por el consumidor: el productor no
+mueve su cursor ni reutiliza espacio todavía ocupado. La pausa conserva la cola.
+Las ventanas no se repintan en segundo plano y los resultados de importación y
+diálogos esperan a que vuelva el primer plano; el log visible queda acotado.
+
+Verificación local y en CI:
+
+- Escritorio: **7/7 CTest**, incluidos GBA/GSFLIB, apertura de carpetas,
+  reproducción, transporte FIFO y paridad PCM. Se ampliaron las pruebas de
+  descarte concurrente, integridad estéreo y ciclos suspend/Stop/descarte/Play.
+- ASan/UBSan/LeakSanitizer local: FIFO **1/1** y GUI/reproducción **2/2**;
+  la única supresión externa es la fuga conocida de QScroller de Qt 6.8.2,
+  aplicable a la GUI. El FIFO se ejecutó sin supresiones.
+- ThreadSanitizer: FIFO **1/1** y productor real **1/1**, sin carreras detectadas.
+  No se usa esta ejecución instrumentada para certificar tiempos de audio.
+- CI del commit del APK: motor normal **6/6**, motor sanitizado **6/6**,
+  copia Java **7/7**, SAF Android **10/10**, interfaz Android **4/4** y
+  ensayo completo de reproducción en segundo plano aprobado.
+- GUI/motor Linux **7/7** local y en el CI de la revisión anterior `8f1f296`;
+  la revisión del APK sólo cambia la preparación del emulador en las pruebas.
+  Al publicar esta validación, el trabajo GUI Linux del nuevo workflow sigue
+  descargando paquetes del sistema; no se cuenta como aprobado.
+- Compilación Java y comprobación sintáctica Clang NDK ARM64 locales;
+  APK completo, ABI, alineación y firma verificados en CI.
+
+El nuevo probe Android usa MainWindow, síntesis C++ y QAudioSink/AAudio reales
+con un patrón musical generado; no sustituye la salida por un backend simulado.
+Registra frames, callbacks, RMS y underruns antes/después de Inicio y pantalla
+apagada. Las órdenes multimedia prueban pausa/reanudación, liberación del wake
+lock y parada sin servicio restante; otra Activity solicita foco transitorio y
+permanente. El historial de wake locks se distingue de la lista de bloqueos
+activos. También se comprueba que las tareas de interfaz esperen a primer plano
+y que se pueda volver a reproducir después de Stop.
+
+Resultados del commit del APK, con Qt 6.11.2 y Android API 35:
+
+| Intervalo | Frames acumulados al terminar | RMS final | Underruns acumulados |
+| --- | ---: | ---: | ---: |
+| Primer plano, 4 s | 231936 | 0.082331 | 5 |
+| Inicio / app oculta, 12 s | 853184 | 0.083716 | 7 |
+| Pantalla apagada, 12 s | 1453440 | 0.083692 | 7 |
+| Reanudación con pantalla apagada, 4 s | 1660672 | 0.084507 | 10 |
+
+La cuenta no aumentó durante ese intervalo corto de pantalla apagada. Sí hubo
+pérdidas al inicio y en otras transiciones del host virtual (29 acumuladas al
+último reinicio), conservadas en el registro. Pausa y Stop detuvieron los callbacks
+y liberaron el wake lock; Stop eliminó el servicio. Los cambios de foco transitorio
+y permanente, las tareas GUI diferidas y el reinicio por toque real después de
+Stop también pasaron. Los cuatro escenarios de interfaz activaron mediante ADB
+Abrir ROM/GSF, Menú y Abrir carpeta GSF después de verificar que la Activity
+estaba activa y desbloqueada.
+
+[Capturas, estados y logs Android de esta revisión](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39838581300/artifacts/12451858175).
+
+Estas ejecuciones son en emulador Android API 35 x86_64. El APK entregado es
+ARM64; no hay teléfono físico conectado. Los underruns de un host virtual y de
+sus transiciones se conservan en el registro: pasar la prueba de ciclo de vida
+no certifica cero pérdidas ni fidelidad acústica en un teléfono. Quedan pendientes
+la escucha y reproducción prolongadas con pantalla apagada en el dispositivo
+del usuario, políticas de batería del fabricante, llamadas y auriculares reales.
+La caducidad de cinco minutos está implementada; no se presenta como una espera
+de cinco minutos medida en el ensayo corto del emulador.
+
 ## Apertura automática de carpetas GSF (novena entrega)
 
 [Descargar APK 1.0.8 ARM64 firmado (ZIP de distribución)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39820077725/artifacts/12444327369)
