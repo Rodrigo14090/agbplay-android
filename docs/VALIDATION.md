@@ -2,6 +2,16 @@
 
 ## Apertura visible en vista móvil (sexta entrega)
 
+[Descargar APK 1.0.5 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39778757850/artifacts/12425807404)
+
+- Commit exacto compilado: `bc96d005a0f92878d92e574bf7f7c0b35ad51476` (checkout verificado en el workflow push).
+- SHA-256 del APK: `9cce377f9e79630093bf01d15802a68faa1a3a73ed4840aa520a2920d73ec6b4`.
+- `org.agbplay.android`, `1.0.5-android-dev`, versionCode **6**; mínimo API 28, target API 35, compile SDK 36.
+- Firma APK v2 válida, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- [Construcción del APK y capturas](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39778757850).
+- [Capturas de interfaz en Linux](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39778757850/artifacts/12425816618).
+- [Workflow completo del mismo commit en el PR, cinco trabajos aprobados](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39778764891): GUI/motor 6/6, motor normal 5/5, sanitizado 5/5 y SAF en emulador Android 5/5; copia Java 7/7.
+
 La captura del teléfono muestra ausente la fila completa de **Abrir ROM/GSF /
 Menú**, mientras transporte, volumen y pestañas siguen presentes. El fallo
 exacto no se ha reproducido con el estilo Qt de Linux; no se atribuye una
@@ -24,10 +34,15 @@ de alto, ocultación/reaparición y ambos puntos de ruptura. Se verifica el reco
 por cada ancestro y el widget que realmente recibe la pulsación en coordenadas
 de ventana. Las capturas son de Qt Widgets en Linux.
 
-La versión prevista es `1.0.5-android-dev`, versionCode **6**. La comprobación
-visual y de apertura en el teléfono Android real sigue pendiente; no hay un
-dispositivo físico conectado a este entorno. Los resultados y el APK de CI se
-añaden tras finalizar la construcción.
+La suite de interfaz también pasó ASan/UBSan/LeakSanitizer localmente usando
+únicamente la supresión conocida de `QScroller::grabGesture` de Qt 6.8.2
+(30 registros, 480 bytes, reproducidos sin agbplay en la investigación anterior).
+No se suprimen errores de las clases de layout de agbplay.
+
+La comprobación visual y de apertura en el teléfono Android real sigue pendiente;
+no hay un dispositivo físico conectado a este entorno. La captura original y
+estas pruebas no demuestran por sí solas la causa exacta ni la resolución en ese
+estilo/plataforma; el APK permite verificarlo en el teléfono.
 
 ## Reserva temporal de PCM y corrección de underruns (quinta entrega)
 
