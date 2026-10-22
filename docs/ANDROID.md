@@ -132,10 +132,37 @@ Las capturas son renderizados Qt Widgets en Linux; no son capturas de Android.
 Para compilar también la salida Qt en Linux: `-DAGBPLAY_QT_AUDIO=ON` (Qt >=6.8).
 La configuración de escritorio conserva PortAudio como backend predeterminado.
 
+## Audio en Android y telemetría
+
+Qt Multimedia 6.11 usa `QAudioSink` con su callback `QSpan<float>` sobre AAudio.
+El callback entrega float32 estéreo intercalado a la cola SPSC; el motor
+MP2K/M4A y sus remuestreadores son los mismos que en PortAudio. La síntesis se
+ejecuta en un productor independiente del event loop y solicita prioridad
+`THREAD_PRIORITY_AUDIO` de Android. En modo callback Qt define los tamaños de
+bloque y `setBufferSize()` no se usa; Qt solicita baja latencia y capacidad
+AAudio de 1024 frames.
+
+Cada cinco segundos la pestaña **Log** reporta underruns, frames faltantes,
+ocupación de cola, tamaño/intervalo/duración de callbacks, máximo de síntesis,
+RMS/pico de las muestras finales, clipping/no finitos, formato de QAudioSink y
+buffer reportado. La escala del control de volumen es cuadrática y 100% equivale
+a ganancia 1.0; no se aumenta la señal ni se reemplaza ningún remuestreador.
+Consultar [el análisis de audio](AUDIO-ANDROID.md) para conocer las mediciones
+de la ROM sintética de escritorio y sus límites.
+
+Para investigar una distorsión reproducible en un teléfono, deja sonar la misma
+canción unos diez segundos, abre la pestaña **Log** y copia las líneas
+`Qt audio output`, `Android synthesis thread` y `Android audio (5s)`. Los
+underruns miden discontinuidad de cola; RMS, pico, clipping y valores no finitos
+ayudan a comprobar por separado amplitud y muestras. Falta comparar la ROM y
+sus ajustes exactos entre el teléfono y escritorio.
+
 Las pruebas utilizan datos sintéticos, sin ROMs comerciales:
 
 - validación de cabecera, límites, overflow de offsets y entradas inválidas;
-- síntesis PCM finita, secuencias GOTO sin espera y cola FIFO concurrente;
+- síntesis PCM finita (la fixture de escritorio a 48 kHz registra RMS 0.0373691
+  y pico 0.332435 en 240000 valores de canal), secuencias GOTO sin espera y cola
+  FIFO concurrente con contadores de underrun;
 - cambios de canciones, mute, velocidad, volumen, stop, suspend/resume y destrucción;
 - lectura/liberación repetida de ZIP y exportación WAV float estéreo;
 - comparación de los remuestreadores seleccionados con la implementación escalar.
@@ -167,8 +194,9 @@ Comprobar con un teléfono real: importación desde varios proveedores SAF,
 perfiles persistentes, ROM corrupta, cambios rápidos entre canciones buenas/malas,
 exportación y compartir, llamadas/foco de audio, Bluetooth/USB/auriculares,
 Home/resume, bloqueo/desbloqueo, rotación, cierre por presión de memoria y
-consumo prolongado. Medir underruns, latencia y batería; comparar grabaciones
-con escritorio a igual perfil/frecuencia. Un APK compilado no demuestra esas pruebas.
+consumo prolongado. Recoger los contadores de audio y comparar grabaciones con
+escritorio a igual ROM, perfil y frecuencia. Un APK compilado no demuestra esas
+pruebas.
 
 Para verificar un APK sin instalarlo:
 

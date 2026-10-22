@@ -1,5 +1,44 @@
 # Validación de la entrega
 
+## Prioridad del productor, telemetría y APK ARM64 (cuarta entrega)
+
+[Descargar APK 1.0.3 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39726795680/artifacts/12403139872)
+
+- [Workflow completo aprobado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39726795680): ARM64, host normal/sanitizado, interfaz y pruebas SAF Android.
+- SHA-256 del APK: `eaddec7a4b746f5af4cf53018ec9091698c2c12b68d76a62f7066ff60a91dca0`.
+- Firma APK v2 válida, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- `org.agbplay.android`, versionCode **4**, mínimo API 28, target API 35, compile SDK 36, Qt 6.11.2 y NDK 27.2.12479018.
+
+Commits de implementación y publicación: `95361daa26580c6adeba1441cc027845849d43f9` y `6544579f3015cf30d7efea4d8e8b5c9aacdeae24`.
+
+El callback Qt 6.11 usa AAudio y no depende del event loop. La síntesis ya corría
+en su propio hilo; ahora ese productor solicita `THREAD_PRIORITY_AUDIO` para que
+la planificación de Android no dependa de actividad táctil. El backend no
+fuerza tamaño con `setBufferSize()` en la ruta callback, porque Qt documenta que
+el tamaño lo elige el backend. El formato solicitado sigue siendo float32,
+estéreo, con la frecuencia configurada; la ruta de síntesis y sus
+remuestreadores no cambiaron. En escritorio las mediciones costosas no se
+ejecutan y PortAudio conserva su procesamiento de muestras.
+
+La ventana **Log** registra cada cinco segundos underruns y frames rellenados
+con silencio, ocupación mínima/máxima de la cola, tamaños e intervalos de
+callback, duración máxima de síntesis/callback, RMS/pico posterior al control de
+volumen, muestras recortadas/no finitas y los valores de formato/buffer que Qt
+reporta. Así se puede distinguir continuidad de amplitud/clipping. La prueba de
+escritorio con ROM sintética, 48 kHz y 600 bloques registró RMS `0.0373691`,
+pico `0.332435` en `240000` valores de canal. La cola mantuvo orden de muestras y
+contó correctamente un callback con cuatro frames ausentes en la prueba
+forzada.
+
+Verificado localmente con la suite de escritorio: **5/5 CTest**. CI aprobó los
+cinco trabajos, incluida compilación ARM64, firma/ABI/alineación, pruebas
+normales y sanitizadas del motor y emulador API 35 para proveedores SAF.
+`PlaybackEngine.cpp` también pasó comprobación sintáctica con Clang NDK ARM64.
+No se dispone de un Android físico en este entorno, así que los contadores de la
+canción del usuario y la escucha posterior a la corrección siguen pendientes
+de prueba en su teléfono. La ruta de audio Qt/AAudio se compiló y empaquetó, no se
+ejecutó en ese teléfono.
+
 ## Corrección de lectura SAF (tercera entrega)
 
 [Descargar APK 1.0.2 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39723428465/artifacts/12401649639)
