@@ -1,5 +1,75 @@
 # Validación de la entrega
 
+## Apertura automática de carpetas GSF (novena entrega)
+
+[Descargar APK 1.0.8 ARM64 firmado (ZIP de distribución)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39820077725/artifacts/12444327369)
+
+- Commit exacto compilado: `2d629344b8fe2a4b072c57bd9ab6bed4a813fb1e` (workflow push y artefacto del mismo SHA).
+- SHA-256 del APK: `c97b56bd6a6488bead47dce1483912f8799af83bd0c9ce4ce54283f4e2873215`.
+- `org.agbplay.android`, `1.0.8-android-dev`, versionCode **9**; mínimo API 28, target API 35, compile SDK 36.
+- Firma de desarrollo APK v2 verificada, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- Qt Multimedia 6.11.2, NDK 27.2.12479018, código nativo Release.
+- [Workflow de construcción y regresión](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39820077725).
+- [Uso, permisos SAF y límites](GSF-ANDROID.md#abrir-una-carpeta-de-ost-108); [reconstrucción](ANDROID.md).
+
+El usuario confirmó que el conjunto ZIP de 1.0.7 funciona en su teléfono y pidió
+abrir directamente una carpeta del OST. **Menú > Abrir carpeta GSF…** abre ahora
+el selector nativo SAF de árboles. Con una sola biblioteca se detecta el GSFLIB,
+se leen sus MINIGSF y se muestra la playlist sin elegir archivos ni responder
+al diálogo Yes/No. Sólo se pregunta por la biblioteca si hay varias. Los
+perfiles y la inicialización MP2K mantienen sus validaciones existentes.
+
+La enumeración usa `DocumentsContract` y URIs con el permiso del árbol. No se
+deducen rutas públicas ni se requieren permisos generales de almacenamiento.
+Se inspeccionan los hijos directos de la carpeta elegida, no sus subcarpetas.
+Portadas y directorios se ignoran; `_lib` identifica sólo la biblioteca elegida
+en ese nivel. Nombres duplicados de bibliotecas se rechazan como ambiguos. La
+copia reutiliza DISPLAY_NAME de la lista sin consultas adicionales por canción,
+conservando la asociación aunque fallen los metadatos individuales del proveedor.
+
+La prueba Android de la primera compilación detectó elementos de menú de sólo
+27 unidades de alto aunque se había indicado `min-height: 48px`. Qt no aplica
+esa geometría a `QMenu::item` sin una caja/font/borde en esa rama del estilo.
+Se usa padding vertical de 16 unidades, que sí participa en el cálculo del
+tamaño. Las pruebas mantienen el requisito de al menos 48 unidades y activación
+por un toque Android; no se rebajó la comprobación para aceptar el tamaño anterior.
+
+Enumeración, copia y análisis de MINIGSF se ejecutan en el trabajador existente,
+con límites de entradas y cancelación entre documentos. Una playlist dañada se
+rechaza antes de cerrar el juego actual. La inicialización/escaneo principal de
+ROM sigue la ruta existente; no se afirma que toda esa fase sea asincrónica.
+La playlist automática sustituye la lista en memoria, queda marcada para guardar
+y no inicia reproducción sin pulsar un control. Las aperturas individuales y ZIP
+conservan su comportamiento.
+
+Verificado sobre el código del APK:
+
+- Linux Qt: **7/7 CTest**, incluidos GBA, GSFLIB, PCM/remuestreo y FIFO/trabajador.
+  La suite GUI abre una carpeta desde cero, verifica títulos/orden y cambio de
+  canción, ignora selectores de otra biblioteca y conserva el motor ante una
+  playlist dañada o carpeta vacía. Prueba además elección/cancelación con varias
+  bibliotecas y carga sin MINIGSF, sin preguntas de playlist.
+- ASan/UBSan/LeakSanitizer local: GSFLIB **1/1 sin supresiones**, GUI **1/1** con
+  la única supresión externa conocida `QScroller::grabGesture` de Qt 6.8.2.
+- CI Linux: motor normal **6/6**, motor ASan/UBSan/LeakSanitizer **6/6**, GUI/motor
+  **7/7**. No se añadieron supresiones al motor.
+- SAF Android API 35: **10/10**, incluidos árboles con IDs opacos/escapados,
+  deduplicación, filtrado de hijos, límites, errores/permisos denegados y copia
+  con metadatos individuales no disponibles. Copia Java: **7/7**.
+- Clang NDK ARM64: comprobación sintáctica de la nueva ruta JNI y del probe;
+  compilación completa del APK y verificación de firma/ABI aprobadas en CI.
+- Interfaz Qt Android 6.11.2: **4/4 casos** con toques ADB sobre teléfono,
+  fuente ampliada, horizontal y tablet. Se exige que los toques activen apertura,
+  Menú y **Abrir carpeta GSF…**, y que esta última entrada mida al menos 48 unidades.
+  Los seis trabajos del workflow del APK terminaron correctamente.
+
+Las pruebas SAF son de ContentResolver en emulador x86_64 y la apertura completa
+del conjunto sintético se prueba con Qt Linux y el PlaybackEngine real con salida
+de prueba. No equivalen a abrir la carpeta con el APK ARM64 en un teléfono físico;
+esa comprobación sigue pendiente. No hay un dispositivo Android real conectado.
+El backend QAudioSink, PlaybackEngine, la reserva PCM y los remuestreadores no
+se modifican respecto a 1.0.7.
+
 ## GSFLIB y MINIGSF (octava entrega)
 
 [Descargar APK 1.0.7 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39789875750/artifacts/12430936917)
