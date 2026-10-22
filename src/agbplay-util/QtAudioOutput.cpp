@@ -7,11 +7,6 @@
 #include <QMediaDevices>
 #include <QIODevice>
 #include "Debug.hpp"
-#ifdef Q_OS_ANDROID
-#include <QCoreApplication>
-#include <QJniObject>
-#include <QTimer>
-#endif
 
 namespace {
 class QtAudioOutput final : public AudioOutput
@@ -38,18 +33,6 @@ class QtAudioOutput final : public AudioOutput
     } source;
     std::unique_ptr<QAudioSink> sink;
     QAudio::Error reportedError = QAudio::NoError;
-#ifdef Q_OS_ANDROID
-    QJniObject focus;
-    QTimer focusTimer;
-    bool appSuspended = false;
-    bool focusSuspended = false;
-    void UpdateFocus() {
-        const bool blocked = appSuspended || !focus.callMethod<jboolean>("hasFocus");
-        if (blocked == focusSuspended) return;
-        focusSuspended = blocked;
-        if (blocked) sink->suspend(); else sink->resume();
-    }
-#endif
 public:
     QtAudioOutput(uint32_t rate, void *context, Render render) : source(context, render) {
         QAudioFormat format;
@@ -77,21 +60,8 @@ public:
                      device.description().toStdString(), rate, sink->format().sampleRate(),
                      sink->format().channelCount(), static_cast<int>(sink->format().sampleFormat()),
                      sink->bufferSize(), sink->volume());
-#ifdef Q_OS_ANDROID
-        focus = QJniObject("org/agbplay/android/AudioFocus", "(Landroid/content/Context;)V",
-                           QNativeInterface::QAndroidApplication::context().object());
-        if (!focus.isValid()) throw Xcept("Cannot initialize Android audio focus");
-        focus.callMethod<jboolean>("request");
-        QObject::connect(&focusTimer, &QTimer::timeout, &focusTimer, [this] { UpdateFocus(); });
-        focusTimer.start(100);
-        UpdateFocus();
-#endif
     }
     ~QtAudioOutput() override {
-#ifdef Q_OS_ANDROID
-        focusTimer.stop();
-        focus.callMethod<void>("close");
-#endif
         sink->stop();
     }
     std::string TakeError() override {
@@ -102,14 +72,9 @@ public:
         return "Audio device stopped (Qt error " + std::to_string(int(error)) + "). Reopen the ROM to retry audio output.";
     }
     void Suspend(bool suspended) override {
-#ifdef Q_OS_ANDROID
-        appSuspended = suspended;
-        if (suspended) focus.callMethod<void>("abandon");
-        else focus.callMethod<jboolean>("request");
-        UpdateFocus();
-#else
+        // Android focus/lifecycle is owned by PlaybackService. The backend only
+        // transports PCM and obeys explicit, primed suspend/resume commands.
         if (suspended) sink->suspend(); else sink->resume();
-#endif
     }
 };
 }

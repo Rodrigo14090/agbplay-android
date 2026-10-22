@@ -6,6 +6,9 @@
     android:versionName="-- %%INSERT_VERSION_NAME%% --">
     <!-- %%INSERT_PERMISSIONS -->
     <!-- %%INSERT_FEATURES -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <supports-screens
         android:anyDensity="true"
         android:largeScreens="true"
@@ -39,7 +42,12 @@
           <meta-data
                 android:name="android.app.arguments"
                 android:value="-- %%INSERT_APP_ARGUMENTS%% --" />
+          <meta-data android:name="android.app.background_running" android:value="true" />
         </activity>
+
+        <service android:name="org.agbplay.android.PlaybackService"
+            android:exported="false" android:stopWithTask="true"
+            android:foregroundServiceType="mediaPlayback" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

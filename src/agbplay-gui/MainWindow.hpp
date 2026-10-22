@@ -25,6 +25,7 @@ namespace DocumentAccess { struct FolderDocument; }
 #include <QTimer>
 
 class PlaybackEngine;
+class AndroidPlayback;
 class ProfileManager;
 struct Settings;
 struct Profile;
@@ -46,6 +47,7 @@ public:
 
 private:
     friend class TestTouchUi;
+    friend class BackgroundAudioProbe;
     void SetupMenuBar();
     void SetupToolBar();
     void SetupWidgets();
@@ -53,6 +55,12 @@ private:
     void SetupTouchInterface();
 
     void Play();
+#ifdef Q_OS_ANDROID
+    void AndroidPlaybackCommand(int command);
+    std::unique_ptr<AndroidPlayback> androidPlayback;
+    bool platformCommand = false;
+    bool outputSuspended = false;
+#endif
     void Pause();
     void Stop();
     void AdvanceSong(int indexDelta);

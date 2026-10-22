@@ -38,8 +38,8 @@ if(ANDROID)
         QT_ANDROID_APP_NAME "agbplay"
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35
-        QT_ANDROID_VERSION_CODE 9
-        QT_ANDROID_VERSION_NAME "1.0.8-android-dev")
+        QT_ANDROID_VERSION_CODE 10
+        QT_ANDROID_VERSION_NAME "1.0.9-android-dev")
 endif()
 
 target_compile_options(agbplay-gui PRIVATE -Wall -Wextra -Wconversion)
@@ -69,4 +69,15 @@ if(ANDROID AND AGBPLAY_ANDROID_UI_PROBE)
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35)
     qt_finalize_executable(android-ui-probe)
+
+    find_package(ZLIB REQUIRED)
+    qt_add_executable(android-background-probe MANUAL_FINALIZATION ../tests/BackgroundAudioProbe.cpp ${AGBPLAY_GUI_QRC})
+    target_link_libraries(android-background-probe PRIVATE agbplay-ui ZLIB::ZLIB)
+    set_target_properties(android-background-probe PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${PROJECT_SOURCE_DIR}/android"
+        QT_ANDROID_PACKAGE_NAME "org.agbplay.android"
+        QT_ANDROID_APP_NAME "agbplay background regression"
+        QT_ANDROID_MIN_SDK_VERSION 28
+        QT_ANDROID_TARGET_SDK_VERSION 35)
+    qt_finalize_executable(android-background-probe)
 endif()

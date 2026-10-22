@@ -15,7 +15,11 @@ build_dir=${AGBPLAY_UI_PROBE_BUILD_DIR:-"$project_root/build-android-ui"}
     -DAGBPLAY_QT_AUDIO=ON -DAGBPLAY_ANDROID_UI_PROBE=ON \
     -DAGBPLAY_BUILD_CLI=OFF -DAGBPLAY_BUILD_NC=OFF -DBUILD_TESTING=OFF
 cmake --build "$build_dir" --target android-ui-probe_make_apk --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
+cmake --build "$build_dir" --target android-background-probe_make_apk --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
 mkdir -p "$build_dir/artifacts"
 apk=$(find "$build_dir" -path '*android-build-android-ui-probe*/outputs/apk/debug/*-debug.apk' -print -quit)
 test -n "$apk"
 cp "$apk" "$build_dir/artifacts/ui-probe-x86_64.apk"
+background_apk=$(find "$build_dir" -path '*android-build-android-background-probe*/outputs/apk/debug/*-debug.apk' -print -quit)
+test -n "$background_apk"
+cp "$background_apk" "$build_dir/artifacts/background-probe-x86_64.apk"

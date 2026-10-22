@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "AndroidPlayback.hpp"
 #include "DocumentAccess.hpp"
 #include "TouchPlayerLayout.hpp"
 #include <QToolButton>
@@ -6,6 +7,7 @@
 #include <QScroller>
 #include <QProgressDialog>
 #include <QSignalBlocker>
+#include <QScopedValueRollback>
 
 #include "AboutWindow.hpp"
 #include "Debug.hpp"
@@ -59,8 +61,9 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
         SetupTouchInterface();
 #ifdef Q_OS_ANDROID
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        if (playbackEngine)
-            playbackEngine->SuspendOutput(state != Qt::ApplicationActive);
+        // Keep the Qt control plane alive, but never paint a suspended surface.
+        setUpdatesEnabled(state == Qt::ApplicationActive);
+        statusUpdateTimer.setInterval(state == Qt::ApplicationActive ? 16 : 250);
         if (state != Qt::ApplicationActive && settings && settings->dirty)
             settings->Save();
     });
@@ -77,6 +80,16 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     // Because we programmatically modify the slider above, the dirty flag is set.
     // Reset this, to avoid an unnecessary save.
     settings->dirty = false;
+
+#ifdef Q_OS_ANDROID
+    androidPlayback = std::make_unique<AndroidPlayback>(this);
+    connect(androidPlayback.get(), &AndroidPlayback::command, this, &MainWindow::AndroidPlaybackCommand);
+    connect(androidPlayback.get(), &AndroidPlayback::error, this, [this](const QString &message) {
+        AndroidPlaybackCommand(AndroidPlayback::Stop);
+        LogAppend("Android playback service: " + message.toStdString());
+        statusBar()->showMessage(message);
+    });
+#endif
 
     connect(&statusUpdateTimer, &QTimer::timeout, this, &MainWindow::StatusUpdate);
     statusUpdateTimer.setTimerType(Qt::PreciseTimer);
@@ -112,6 +125,9 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
 
 MainWindow::~MainWindow()
 {
+#ifdef Q_OS_ANDROID
+    androidPlayback.reset(); // detach JNI before native player/UI destruction
+#endif
     if (importCancelled) importCancelled->store(true);
     if (importWorker.joinable()) importWorker.join();
     // Release gesture registrations while their widget targets still exist.
@@ -543,7 +559,13 @@ void MainWindow::Play()
         return;
     }
 
+#ifdef Q_OS_ANDROID
+    if (!platformCommand) { androidPlayback->play(statusWidget.songWidget.titleLabel.text()); return; }
+#endif
     playbackEngine->Play();
+#ifdef Q_OS_ANDROID
+    if (outputSuspended) { playbackEngine->SuspendOutput(false); outputSuspended = false; }
+#endif
     playing = true;
 
     if (playlistFocus)
@@ -563,7 +585,16 @@ void MainWindow::Pause()
         return;
     }
 
+#ifdef Q_OS_ANDROID
+    if (!platformCommand) {
+        if (playing) androidPlayback->pause(); else Play();
+        return;
+    }
+    if (playing) playing = playbackEngine->Pause();
+    if (!outputSuspended) { playbackEngine->SuspendOutput(true); outputSuspended = true; }
+#else
     playing = playbackEngine->Pause();
+#endif
 
     playButton.setChecked(playing);
     stopButton.setChecked(false);
@@ -572,12 +603,18 @@ void MainWindow::Pause()
 
 void MainWindow::Stop()
 {
+#ifdef Q_OS_ANDROID
+    if (androidPlayback) androidPlayback->stop();
+#endif
     if (!playbackEngine) {
         stopButton.setChecked(true);
         return;
     }
 
     playbackEngine->Stop();
+#ifdef Q_OS_ANDROID
+    if (!outputSuspended) { playbackEngine->SuspendOutput(true); outputSuspended = true; }
+#endif
     playing = false;
 
     if (playlistFocus)
@@ -589,6 +626,25 @@ void MainWindow::Stop()
     stopButton.setChecked(true);
     pauseButton.setChecked(false);
 }
+
+#ifdef Q_OS_ANDROID
+void MainWindow::AndroidPlaybackCommand(int command)
+{
+    QScopedValueRollback guard(platformCommand, true);
+    if (!playbackEngine) { androidPlayback->stop(); return; }
+    switch (command) {
+    case AndroidPlayback::Play: Play(); break;
+    case AndroidPlayback::Pause: Pause(); break;
+    case AndroidPlayback::Stop: Stop(); break;
+    case AndroidPlayback::Next: AdvanceSong(1); break;
+    case AndroidPlayback::Previous: AdvanceSong(-1); break;
+    case AndroidPlayback::Failed:
+        Stop();
+        LogAppend("Android audio focus was not granted; playback remains stopped.");
+        break;
+    }
+}
+#endif
 
 void MainWindow::AdvanceSong(int indexDelta)
 {
@@ -666,6 +722,9 @@ void MainWindow::LoadSong(const std::string &title, uint16_t id)
 
     playbackEngine->LoadSong(id);
     statusWidget.songWidget.titleLabel.setText(QString::fromStdString(fmt::format("{} - {}", id, title)));
+#ifdef Q_OS_ANDROID
+    androidPlayback->title(statusWidget.songWidget.titleLabel.text());
+#endif
 
     if (playlistFocus) {
         songlistWidget.SetPlayState(false);
@@ -1101,6 +1160,10 @@ void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths,
         CloseGame();
         return;
     }
+#ifdef Q_OS_ANDROID
+    playbackEngine->SuspendOutput(true);
+    outputSuspended = true;
+#endif
     visualizerState = std::make_unique<MP2KVisualizerState>();
 
     playbackEngine->SetOutputNumBuffers(settings->playbackOutputNumBuffers);
@@ -1475,6 +1538,9 @@ void MainWindow::StatusUpdate()
 #endif
         const auto error = playbackEngine->TakeError();
         if (!error.empty()) {
+#ifdef Q_OS_ANDROID
+            Stop();
+#endif
             playing = false;
             playButton.setChecked(false);
             pauseButton.setChecked(false);
@@ -1488,6 +1554,13 @@ void MainWindow::StatusUpdate()
     if (!playbackEngine || !visualizerState)
         return;
 
+#ifdef Q_OS_ANDROID
+    // Song completion/transport still runs while hidden; visualizers do not.
+    if (qApp->applicationState() != Qt::ApplicationActive) {
+        if (playing && playbackEngine->SongEnded()) AdvanceSong(1);
+        return;
+    }
+#endif
     playbackEngine->GetVisualizerState(*visualizerState);
     vuMeter.SetLevel(
         visualizerState->masterRmsLeft,

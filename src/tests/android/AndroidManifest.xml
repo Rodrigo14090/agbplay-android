@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.agbplay.saftest">
     <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35" />
     <application android:label="agbplay SAF regression" android:debuggable="true">
+        <activity android:name="org.agbplay.saftest.FocusStealer" android:exported="true" />
         <uses-library android:name="android.test.runner" />
         <uses-library android:name="android.test.base" />
         <provider android:name="org.agbplay.saftest.TestProvider"
