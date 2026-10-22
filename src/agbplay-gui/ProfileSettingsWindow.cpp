@@ -756,7 +756,7 @@ void ProfileSettingsWindow::InitProfileAssignment()
              * we would have to skip inserting 'c' instead of erasing the previously added
              * character. */
             if (deleteSpace && nospaceText.size() > 0)
-                nospaceText.erase(nospaceText.end() - 1);
+                nospaceText.chop(1);
 
             nospaceText += c.toUpper();
         }

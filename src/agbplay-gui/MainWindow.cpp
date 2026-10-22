@@ -27,6 +27,7 @@
 #include <fstream>
 #include <QCloseEvent>
 #include <QDesktopServices>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
