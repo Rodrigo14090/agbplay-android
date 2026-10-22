@@ -471,13 +471,14 @@ void PlaybackEngine::PrimeOutput()
 void PlaybackEngine::SuspendOutput(bool suspend)
 {
     if (suspend) {
+        // Keep supplying PCM until the device has stopped consuming it.
+        output->Suspend(true);
         {
             std::scoped_lock lock(playerInvokeMutex);
             suspended.store(true);
             ++scheduleRevision;
         }
         playerInvokeReady.notify_one();
-        output->Suspend(true);
     } else {
         PrimeOutput(); // fill while the device is still suspended
         output->Suspend(false);
@@ -486,9 +487,7 @@ void PlaybackEngine::SuspendOutput(bool suspend)
 
 void PlaybackEngine::updateVisualizerState()
 {
-    /* We assume that GetVisualizerState may be more expensive than a simple copy.
-     * Accordingly we generate the state, then we lock the mutex and publish the state.
-     * That way the mutex is only locked for the smallest duration necessary. */
+    // Generate privately, then publish without waiting for the UI reader.
 
     ctx->GetVisualizerState(visualizerStatePlayer);
 

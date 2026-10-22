@@ -36,7 +36,9 @@ SimulationResult Simulate(size_t blockSize, uint32_t reserveMs, uint64_t wakeDel
         CHECK(queue.Put(block));
         CHECK(queue.Queued() <= AudioFrameQueue::Capacity);
     };
-    while (queue.Queued() < target) put(); // same startup priming as PlaybackEngine
+    // Prime both policies to compare steady-state failures, without counting
+    // the old implementation's separate empty-start defect.
+    while (queue.Queued() < target) put();
     uint64_t callbackAt = periodNs;
     uint64_t producerAt = static_cast<uint64_t>(policy.WaitForRefill(queue.Queued(), target).count()) + wakeDelayNs;
     bool synthesizing = false;
@@ -56,7 +58,8 @@ SimulationResult Simulate(size_t blockSize, uint32_t reserveMs, uint64_t wakeDel
         } else if (synthesizing) {
             put();
             synthesizing = false; // immediately reevaluate, fill the entire reserve in a batch
-        } else if (queue.Queued() < target && queue.Writable() >= blockSize) {
+        } else if ((reserveMs ? queue.Queued() < target : queue.Queued() <= target) &&
+                   queue.Writable() >= blockSize) {
             const uint64_t mixCost = fixedMixCostNs ? fixedMixCostNs :
                 ((++mixes % 257 == 0) ? 5000000 : blockSize * 1000000000ull / (48000 * 16));
             producerAt += mixCost;
@@ -188,6 +191,13 @@ int main()
     CHECK(policy.Target(2, 96) == 1440 && policy.LowWatermark(1440) == 1200);
     CHECK(policy.Target(16, AudioFrameQueue::Capacity) == AudioFrameQueue::Capacity / 2);
     CHECK(policy.WaitForRefill(1440, 1440) == std::chrono::milliseconds(5));
+    for (uint32_t rate : {8000u, 22050u, 44100u, 48000u, 96000u, 192000u}) {
+        AudioBufferPolicy atRate(rate, 30);
+        const size_t target = atRate.Target(2, 96);
+        CHECK(target >= (static_cast<size_t>(rate) * 30 + 999) / 1000);
+        CHECK(target <= AudioFrameQueue::Capacity / 2);
+        CHECK(atRate.WaitForRefill(target, target).count() > 0);
+    }
     BoundariesAndMeter();
     ConcurrentFifo();
     const auto oldPolicy = Simulate(200, 0, 10000000, 60);

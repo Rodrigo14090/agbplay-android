@@ -18,6 +18,12 @@ jobs:
           fetch-depth: 0
       - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libboost-dev libfmt-dev nlohmann-json3-dev libzip-dev libsndfile1-dev zlib1g-dev portaudio19-dev libportaudiocpp0
       - run: ./scripts/test-host.sh -DENABLE_ADDRESS_SANITIZER=${{ matrix.sanitizer }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-regression-${{ matrix.sanitizer }}
+          path: build-test/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
   touch-ui:
     runs-on: ubuntu-24.04
     steps:

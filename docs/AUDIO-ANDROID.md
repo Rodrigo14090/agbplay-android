@@ -54,7 +54,9 @@ Con bloques de 200, la cola de reproducción suele moverse entre 25 y menos de
 la del dispositivo. El margen se eligió frente a las demoras medidas de unos
 10 ms y picos de trabajo de unos 5 ms. No promete cubrir paradas ilimitadas ni una
 síntesis permanentemente más lenta que tiempo real. Los ensayos de 20, 30 y 40 ms
-permiten comprobar el compromiso; 30 ms deja margen para un reproductor musical.
+permiten comprobar el compromiso: con bloques de 200, 10 ms de retraso de despertar
+y picos de síntesis de 5 ms, 20 ms aún perdió 120 frames en tres callbacks; 30 y
+40 ms no perdieron frames. Se eligió 30 ms como margen para un reproductor musical.
 
 La capacidad física del FIFO sigue siendo 32768 frames / 256 KiB. A 48 kHz el
 objetivo de 1440 frames ocupa 11,25 KiB de PCM. No se aumentó la capacidad ni se
@@ -137,6 +139,34 @@ comandos ni Qt/eventos de UI, cambios de canción, pausa, suspensión/reanudaci�
 preferencias, 20 vidas de engine y fallo de apertura tras precargar.
 El backend falso usa hilos Linux y esperas nominales de 2 ms; el simulador es el
 que exige consumo exacto de 48000 frames/s independientemente del planificador.
+La prueba concurrente exige continuidad cuando los máximos observados caben en
+su presupuesto (retraso de despertar <=10 ms, trabajo <=5 ms e intervalo entre
+producciones <=20 ms). Fuera de él registra explícitamente las pérdidas sin
+certificar continuidad; las invariantes de datos y ciclo de vida siguen siendo
+obligatorias. Una repetición del host cloud llegó a retrasar el despertar unos
+195 ms y el trabajo unos 99 ms, muy por encima de la reserva finita. No se aumenta
+el buffer de la app para ocultar esas pausas artificiales del entorno de pruebas.
+
+Se ejecutaron 6/6 CTest en Linux con GUI y 5/5 pruebas del motor con ASan, UBSan y
+LeakSanitizer (sin supresiones para estas pruebas del motor). ThreadSanitizer
+aprobó `playback` y `audio-buffering`, incluyendo accesos concurrentes al FIFO,
+telemetría, comandos y cierre. En el entorno cloud LSan requiere ejecutar fuera
+del monitor ptrace; los resultados válidos se obtuvieron así. Los logs de pruebas
+normales y sanitizadas de CI se publican como artefactos `audio-regression-OFF`
+y `audio-regression-ON`.
+
+Para repetir el análisis de carreras (dependencias de escritorio instaladas):
+
+```bash
+cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DAGBPLAY_BUILD_GUI=OFF -DAGBPLAY_BUILD_CLI=OFF -DAGBPLAY_BUILD_NC=OFF \
+  -DBUILD_TESTING=ON -DAGBPLAY_ENABLE_AVX2=OFF \
+  -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+cmake --build build-tsan --target test-playback test-audio-buffering
+TSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-tsan \
+  -R '^(playback|audio-buffering)$' --output-on-failure
+```
 
 Con PCM sintético del motor original, el transporte en callbacks de 96 frames
 se compara bit a bit frente a la referencia directa para SINC, BLEP y BLAMP:
