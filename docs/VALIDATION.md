@@ -1,5 +1,54 @@
 # Validación de la entrega
 
+## Corrección de lectura SAF (tercera entrega)
+
+[Descargar APK 1.0.2 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39723428465/artifacts/12401649639)
+
+- [Workflow completo aprobado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39723428465): cinco trabajos, incluyendo pruebas de proveedores Android en emulador.
+- SHA-256 del APK: `f51b37df24533ace39ae74398b63f24a05a869b2eb045950e1cd7cac6b330722`.
+- Firma v2 válida; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- [Resultado de instrumentación Android: OK (5 tests)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39723428465/artifacts/12401009957).
+
+Código: `2c93eef2fa64db50b52238d7c9a562a955928bc0`; APK `1.0.2-android-dev`,
+versionCode **3**. El usuario reportó «Cannot read selected document: Unknown
+error» al abrir una GBA desde almacenamiento interno/Descargas. Ese mensaje
+procedía del fallo de QFile::open(content://), antes del análisis de la ROM.
+No se confirmó una causa concreta dentro del proveedor del teléfono.
+
+La importación ahora utiliza directamente ContentResolver.openInputStream de
+Android. Qt mantiene el selector SAF, pero ya no interpreta ni reconstruye la
+URI para leerla con su motor de archivos. selectedUrls conserva la codificación,
+DISPLAY_NAME aporta la extensión original cuando está disponible y los metadatos
+son opcionales. La copia secuencial de 64 KiB no requiere tamaño/seek/available,
+se limita a 64 MiB y se publica de forma atómica. Se conserva la copia previa y
+el juego abierto si falla. JNI conserva los detalles de la excepción Android.
+También se controlan los errores de lectura al importar playlists MINIGSF.
+
+Comprobado:
+
+- Compilación local de DocumentAccess con NDK 27.2/Clang/AArch64/API 28.
+- GUI de escritorio compilada y 5/5 pruebas CTest aprobadas localmente y en CI.
+- 4/4 pruebas del motor normales y con ASan/UBSan/LeakSanitizer aprobadas en CI.
+- 7 pruebas Java de copia: comparación byte por byte con lecturas cortas, límite
+  exacto y exceso de 64 MiB, stream vacío, errores de lectura/escritura y lecturas
+  sin progreso. No se usa tamaño ni available().
+- 5 pruebas de instrumentación aprobadas en emulador Android API 35 x86_64,
+  ejecutando el mismo DocumentImporter que se incluye en el APK ARM64:
+  proveedor real MediaStore Downloads del almacenamiento interno; proveedor
+  sintético con pipe, tamaño desconocido, nombre Unicode/#/% y URI con ID
+  codificado; metadatos denegados con lectura válida; fallo de lectura conservando
+  la copia anterior y eliminando temporales; permisos denegados con detalle.
+
+Las pruebas Android usan datos generados, no ROMs comerciales. La entrada creada
+en Descargas se elimina al terminar. Es una app separada org.agbplay.saftest;
+no sustituye ni requiere modificar la instalación de agbplay.
+
+No se ha repetido todavía la apertura de la ROM del usuario en su teléfono.
+La instrumentación verifica el importador Java y proveedores Android; la
+compilación del APK verifica el puente JNI, pero su ejecución desde la interfaz
+Qt en ese teléfono, la reproducción y otros proveedores siguen requiriendo
+pruebas físicas. No se modificaron el motor C++ ni el backend de audio.
+
 ## Interfaz adaptable y apertura SAF (segunda entrega)
 
 [Descargar ZIP con el nuevo APK ARM64 firmado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39721356692/artifacts/12401496170)

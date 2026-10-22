@@ -54,8 +54,16 @@ adb install -r build-android/artifacts/agbplay-android-arm64-debug.apk
 
 ## Uso y almacenamiento
 
-Abrir ROM/GSF usa el selector de documentos del sistema. Qt abre `content://`;
-se copia en bloques de 64 KiB a caché privada con un máximo de 64 MiB por entrada.
+Abrir ROM/GSF usa el selector de documentos del sistema de Qt. Desde la versión
+1.0.2, las URI `content://` se leen directamente con
+`ContentResolver.openInputStream` de Android, conservando su codificación y
+consultando opcionalmente `OpenableColumns.DISPLAY_NAME`. No se reconstruye
+la ruta ni se depende del lector de archivos de Qt para acceder al proveedor.
+La copia usa bloques de 64 KiB y un máximo de 64 MiB por documento, leyendo hasta
+EOF sin suponer un tamaño conocido, buscar en el flujo ni consultar available().
+Se publica atómicamente en caché privada sólo tras una lectura completa; un
+fallo elimina el temporal, conserva la copia previa y deja abierto el juego
+actual. Los errores JNI muestran la excepción concreta de Android.
 El motor sigue usando sus lectores originales de archivos/ZIP. Los perfiles y
 configuración se guardan mediante QStandardPaths en el espacio privado de la app.
 No se pide permiso de acceso general al almacenamiento.
@@ -131,6 +139,27 @@ Las pruebas utilizan datos sintéticos, sin ROMs comerciales:
 - cambios de canciones, mute, velocidad, volumen, stop, suspend/resume y destrucción;
 - lectura/liberación repetida de ZIP y exportación WAV float estéreo;
 - comparación de los remuestreadores seleccionados con la implementación escalar.
+
+## Regresión del acceso a documentos Android
+
+```bash
+# JDK 17+; siete casos de copia secuencial sin dependencias Android
+./scripts/test-documents.sh
+
+# SDK 35/build-tools 35.0.0, JDK y un emulador/dispositivo de prueba API 29+
+./scripts/build-saf-tests.sh
+./scripts/test-saf-android.sh
+```
+
+El segundo script instala `org.agbplay.saftest`, una app de prueba separada de
+agbplay que contiene únicamente datos generados. No abre ROMs comerciales.
+Prueba ContentResolver con pipes, tamaño desconocido, nombres Unicode/espacios/
+`#`/`%`, ID codificado con barras, metadatos opcionales, reemplazo atómico,
+conservación de la copia previa ante error y permisos denegados. Incluye una
+entrada propia del proveedor MediaStore Downloads del almacenamiento interno,
+y elimina esa entrada al terminar. CI ejecuta estos casos en Android API 35
+x86_64; el APK de agbplay se construye aparte para ARM64. El emulador se utiliza
+sólo para pruebas, nunca como dependencia de la aplicación.
 
 ## Validación en dispositivo pendiente
 
