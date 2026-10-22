@@ -29,6 +29,15 @@ directo de una canción en un slot inactivo también se protege. Los slots vací
 no asignan pistas. El escáner deja de leer al terminar la ROM. También se corrige
 la rama de configuración manual que no publicaba los resultados de la tabla y
 del modo sonoro, y el guardado de `playerTable` en JSON.
+Los perfiles completamente manuales se validan por sus rangos y no necesitan
+cumplir el mínimo de cuatro canciones del autodetector. Se conserva la prioridad
+al guardar/cargar y se rechazan números inválidos antes de convertirlos a uint8;
+un perfil JSON inválido se conserva en disco, se omite y se registra el motivo.
+
+El usuario confirmó que su mismo GSFLIB/MINIGSF funciona en agbplay oficial de
+escritorio y que la entrega anterior eliminó los underruns de sus ROMs GBA.
+La comparación ejecutada aquí usa datos sintéticos; falta verificar el conjunto
+real con esta corrección.
 
 ## Importación Android
 

@@ -67,6 +67,10 @@ int main() {
     CHECK(configured->ScanOk());
     configured->ApplyScanToPlayback();
     CHECK(configured->playerTablePlayback[1].maxTracks == 16);
+    configured->songTableInfoConfig.count = 1; // manual tables need not satisfy the auto-scan minimum of four songs
+    MP2KScanner(rom).Scan(configured);
+    CHECK(configured->songTableInfoScanned.count == 1);
+    configured->songTableInfoConfig = profile.songTableInfoPlayback;
     const auto original = profile.playerTablePlayback;
     profile.playerTablePlayback[1].maxTracks = 0;
     profile.playerTablePlayback[0].maxTracks = 1; // not an all-zero table: song targets an inactive slot

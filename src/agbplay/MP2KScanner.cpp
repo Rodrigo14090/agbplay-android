@@ -17,9 +17,23 @@ std::vector<MP2KScanner::Result> MP2KScanner::Scan(std::shared_ptr<Profile> prof
      * to a (non-provided) profile. */
     std::vector<Result> results;
 
+    if (profile && profile->songTableInfoConfig.pos != SongTableInfo::POS_AUTO &&
+        profile->songTableInfoConfig.count != SongTableInfo::COUNT_AUTO &&
+        !profile->playerTableConfig.empty() && !profile->mp2kSoundModeConfig.IsAuto()) {
+        const auto &table = profile->songTableInfoConfig;
+        if (table.count == 0 || !rom.ValidRange(table.pos, size_t(table.count) * 8))
+            throw Xcept("Configured song table is empty or outside ROM");
+        profile->songTableInfoScanned = table;
+        profile->playerTableScanned = profile->playerTableConfig;
+        profile->mp2kSoundModeScanned = profile->mp2kSoundModeConfig;
+        return results;
+    }
+
     InitPointerCache();
 
     size_t findPos = SEARCH_START;
+    if (profile && profile->songTableInfoConfig.pos != SongTableInfo::POS_AUTO)
+        findPos = profile->songTableInfoConfig.pos;
 
     while (true) {
         /* 1. Determine songtable position */
@@ -31,6 +45,9 @@ std::vector<MP2KScanner::Result> MP2KScanner::Scan(std::shared_ptr<Profile> prof
 
         const bool songtableValid = FindSongTable(findPos, songTablePos, songCount);
         if (!songtableValid)
+            break;
+        if (profile && profile->songTableInfoConfig.pos != SongTableInfo::POS_AUTO &&
+            songTablePos != profile->songTableInfoConfig.pos)
             break;
 
         if (profile && !profile->songTableInfoConfig.IsAuto() &&
