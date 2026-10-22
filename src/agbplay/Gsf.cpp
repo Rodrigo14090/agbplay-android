@@ -226,7 +226,10 @@ std::vector<Gsf::Song> Gsf::ReadPlaylist(const std::vector<std::filesystem::path
                 return true;
             });
     }
-    std::sort(songs.begin(), songs.end(), [](const auto &a, const auto &b) { return a.filename.generic_string() < b.filename.generic_string(); });
+    std::sort(songs.begin(), songs.end(), [](const auto &a, const auto &b) {
+        if (a.filename.filename() != b.filename.filename()) return a.filename.filename() < b.filename.filename();
+        return a.filename.generic_string() < b.filename.generic_string();
+    });
     return songs;
 }
 

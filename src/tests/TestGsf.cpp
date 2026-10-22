@@ -8,15 +8,20 @@
 #include <iostream>
 #include <cmath>
 #include <zip.h>
+#include <cstdlib>
 
 #define CHECK(x) do { if (!(x)) throw std::runtime_error(#x); } while (false)
 template<class F> void Reject(F f) { bool failed = false; try { f(); } catch (const std::exception &) { failed = true; } CHECK(failed); }
 int main() {
     const auto dir = std::filesystem::temp_directory_path() / "agbplay-gsf-regression";
     std::filesystem::create_directories(dir);
+#ifndef _WIN32
+    setenv("XDG_CONFIG_HOME", dir.c_str(), 1);
+#endif
     struct Cleanup { std::filesystem::path p; ~Cleanup() { std::filesystem::remove_all(p); } } cleanup{dir};
     auto save = [&](const auto &name, const auto &data) {
         const auto path = dir / name;
+        std::filesystem::create_directories(path.parent_path());
         std::ofstream file(path, std::ios::binary);
         file.write(reinterpret_cast<const char *>(data.data()), data.size());
         return path;
@@ -64,6 +69,7 @@ int main() {
     CHECK(configured->playerTablePlayback[1].maxTracks == 16);
     const auto original = profile.playerTablePlayback;
     profile.playerTablePlayback[1].maxTracks = 0;
+    profile.playerTablePlayback[0].maxTracks = 1; // not an all-zero table: song targets an inactive slot
     Reject(render);
     profile.playerTablePlayback = original;
     profile.playerTablePlayback[1].maxTracks = 17;
@@ -73,6 +79,11 @@ int main() {
     Reject([&] { Gsf::ReadPlaylist({a}, "other.gsflib", 4); });
     Reject([&] { Gsf::ReadPlaylist({b}, rom.GsfPath(), 1); });
     Reject([&] { Gsf::ReadPlaylist({a}, rom.GsfPath(), 4, [] { return true; }); });
+    const auto copiedA = save("zz-import/01.minigsf", Fixture::Psf({0}, "title=First\n_lib=fixture.gsflib\n"));
+    const auto copiedB = save("aa-import/02.minigsf", Fixture::Psf({1}, "title=Second\n_lib=fixture.gsflib\n"));
+    CHECK(Gsf::ReadPlaylist({copiedB, copiedA}, rom.GsfPath(), 4)[0].title == "First");
+    const auto wide = Gsf::ReadSong(Fixture::Psf({0x34, 0x12}, "TITLE=Canción ♫\r\n_LIB=fixture.gsflib\r\n"));
+    CHECK(wide.id == 0x1234 && wide.title == "Canción ♫" && wide.library == "fixture.gsflib");
     int error = 0;
     auto *zip = zip_open((dir / "set.zip").c_str(), ZIP_CREATE | ZIP_TRUNCATE, &error);
     CHECK(zip);
@@ -88,5 +99,31 @@ int main() {
     Reject([&] { Gsf::GetRomData(Fixture::Psf({1}, {}, 0x02000000), reconstructed); });
     auto corrupt = lib; corrupt[16] ^= 1;
     Reject([&] { Gsf::GetRomData(corrupt, reconstructed); });
+    auto reserved = lib;
+    reserved.insert(reserved.begin() + 16, {1, 2, 3});
+    Fixture::Put32(reserved, 4, 3);
+    CHECK(Gsf::GetRomData(reserved, reconstructed) && reconstructed == bytes);
+    auto gba = Rom::LoadFromFile(save("regular.gba", Fixture::ScannableRom(false)));
+    const auto gbaScan = MP2KScanner(gba).Scan(nullptr);
+    CHECK(gbaScan.size() == 1 && gbaScan[0].playerTableInfo[1].maxTracks == 16);
+#ifndef _WIN32
+    // Persist a manual player table, including inactive slots and priority.
+    configured->gameMatch.gameCodes = {"TEST"};
+    configured->path = dir / "agbplay/profiles/manual.json";
+    configured->playerTableConfig[1].usePriority = 1;
+    configured->dirty = true;
+    std::filesystem::create_directories(configured->path.parent_path());
+    manager.GetAllProfiles().clear();
+    manager.GetAllProfiles().push_back(configured);
+    manager.SaveProfiles();
+    std::ofstream(dir / "agbplay/profiles/bad.json") << R"({"gameMatch":{"gameCodes":["TEST"]},"playerTable":[{"maxTracks":256}]})";
+    ProfileManager restored;
+    restored.LoadProfiles();
+    CHECK(restored.GetAllProfiles().size() == 1);
+    const auto restoredProfiles = restored.GetProfiles(rom);
+    CHECK(restoredProfiles.size() == 1);
+    CHECK(restoredProfiles[0]->playerTablePlayback[0].maxTracks == 0);
+    CHECK(restoredProfiles[0]->playerTablePlayback[1].usePriority == 1);
+#endif
     std::cout << "GSFLIB scan/profile/PCM, inactive players, MINIGSF associations and ZIP passed\n";
 }

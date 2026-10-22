@@ -148,8 +148,12 @@ void ProfileManager::LoadProfileDir(const std::filesystem::path &dir)
     for (const auto &dirEntry : std::filesystem::directory_iterator(dir)) {
         if (dirEntry.is_directory())
             LoadProfileDir(dirEntry.path());
-        else if (dirEntry.path().extension() == ".json")
-            LoadProfile(dirEntry.path());
+        else if (dirEntry.path().extension() == ".json") {
+            try { LoadProfile(dirEntry.path()); }
+            catch (const std::exception &error) {
+                Debug::print("Ignoring invalid profile '{}': {}", dirEntry.path().string(), error.what());
+            }
+        }
     }
 }
 
@@ -349,8 +353,8 @@ void ProfileManager::LoadProfile(const std::filesystem::path &filePath)
             if (!entry.is_object())
                 break;
             PlayerInfo pi;
-            if (!entry.contains("maxTracks") || !entry["maxTracks"].is_number())
-                break;
+            if (!entry.contains("maxTracks") || !entry["maxTracks"].is_number_integer())
+                throw Xcept("Profile '{}' has a noninteger or missing maxTracks", filePath.string());
             const int64_t tracks = entry["maxTracks"];
             if (tracks < 0 || tracks > 16)
                 throw Xcept("Profile '{}' has invalid maxTracks {} (expected 0..16)", filePath.string(), tracks);
@@ -485,7 +489,7 @@ void ProfileManager::SaveProfile(std::shared_ptr<Profile> &p)
         for (const auto &player : p->playerTableConfig) {
             json jpi;
             jpi["maxTracks"] = player.maxTracks;
-            jpi["usePriority"] = player.usePriority;
+            jpi["usePriority"] = player.usePriority != 0;
             jpti.push_back(std::move(jpi));
         }
 

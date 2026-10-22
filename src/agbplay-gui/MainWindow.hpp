@@ -11,7 +11,6 @@
 #include <memory>
 #include <thread>
 #include <functional>
-#include <stop_token>
 class QProgressDialog;
 #include <QListView>
 #include <QMainWindow>
@@ -68,7 +67,7 @@ private:
 
     void ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath = "");
     void ImportGsfPaths(const std::vector<std::filesystem::path> &paths);
-    void RunImport(std::function<std::function<void()>(std::stop_token)> task);
+    void RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task);
     void OpenDocuments(const std::vector<std::filesystem::path> &paths);
     bool AskGameCodeAndUpdateProfile();
 
@@ -167,7 +166,8 @@ private:
     /* File Export */
     std::unique_ptr<std::thread> exportThread;
     std::atomic<bool> exportBusy = false;
-    std::jthread importWorker;
+    std::thread importWorker;
+    std::shared_ptr<std::atomic<bool>> importCancelled;
     QProgressDialog *importProgress = nullptr;
     bool importBusy = false;
 

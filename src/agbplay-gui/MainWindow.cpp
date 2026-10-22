@@ -112,7 +112,7 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
 
 MainWindow::~MainWindow()
 {
-    importWorker.request_stop();
+    if (importCancelled) importCancelled->store(true);
     if (importWorker.joinable()) importWorker.join();
     // Release gesture registrations while their widget targets still exist.
     for (auto *widget : findChildren<QWidget *>())
@@ -730,28 +730,30 @@ void MainWindow::PlaylistSwitchSong(int row)
     Play();
 }
 
-void MainWindow::RunImport(std::function<std::function<void()>(std::stop_token)> task)
+void MainWindow::RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task)
 {
     if (importBusy) return;
     if (importWorker.joinable()) importWorker.join();
     importBusy = true;
+    importCancelled = std::make_shared<std::atomic<bool>>(false);
+    const auto cancelled = importCancelled;
     importProgress = new QProgressDialog("Importando documentos…", "Cancelar", 0, 0, this);
     importProgress->setWindowModality(Qt::WindowModal);
     importProgress->setMinimumDuration(0);
-    connect(importProgress, &QProgressDialog::canceled, this, [this] { importWorker.request_stop(); });
+    connect(importProgress, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     importProgress->show();
-    importWorker = std::jthread([this, task = std::move(task)](std::stop_token stop) {
+    importWorker = std::thread([this, task = std::move(task), cancelled] {
         std::function<void()> finish;
         QString error;
-        try { finish = task(stop); }
+        try { finish = task([cancelled] { return cancelled->load(); }); }
         catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
-        QMetaObject::invokeMethod(this, [this, finish = std::move(finish), error, stop] {
+        QMetaObject::invokeMethod(this, [this, finish = std::move(finish), error, cancelled] {
             importBusy = false;
             disconnect(importProgress, nullptr, this, nullptr);
             importProgress->close();
             importProgress->deleteLater();
             importProgress = nullptr;
-            if (stop.stop_requested()) return;
+            if (cancelled->load()) return;
             if (!error.isEmpty()) { MBoxError("Document import", error.toStdString()); return; }
             try { if (finish) finish(); }
             catch (const std::exception &e) { MBoxError("Document import", e.what()); }
@@ -765,8 +767,8 @@ void MainWindow::ImportGsfPaths(const std::vector<std::filesystem::path> &paths)
     const auto library = Rom::Instance().IsGsf() ? Rom::Instance().GsfPath() : std::filesystem::path{};
     const auto count = profile->songTableInfoPlayback.count;
     const auto session = profile->sessionId;
-    RunImport([this, paths, library, count, session](std::stop_token stop) {
-        auto songs = Gsf::ReadPlaylist(paths, library, count, [&] { return stop.stop_requested(); });
+    RunImport([this, paths, library, count, session](const std::function<bool()> &cancelled) {
+        auto songs = Gsf::ReadPlaylist(paths, library, count, cancelled);
         return [this, songs = std::move(songs), session] {
             if (!profile || profile->sessionId != session) return;
             if (songs.empty()) { MBoxInfo("GSF playlist", "No MINIGSF files were found in the selected documents."); return; }
@@ -809,10 +811,10 @@ void MainWindow::ProfileImportGsfPlaylist(const std::filesystem::path &gameFileP
 #endif
     if (!dialog.exec() || dialog.selectedUrls().isEmpty()) return;
     const auto urls = dialog.selectedUrls();
-    RunImport([this, urls](std::stop_token stop) {
+    RunImport([this, urls](const std::function<bool()> &cancelled) {
         std::vector<std::filesystem::path> paths;
         for (const auto &url : urls) {
-            if (stop.stop_requested()) return std::function<void()>{};
+            if (cancelled()) return std::function<void()>{};
             paths.push_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
         }
         return std::function<void()>([this, paths = std::move(paths)] { ImportGsfPaths(paths); });
@@ -899,10 +901,10 @@ void MainWindow::LoadGame()
 
     if (fileDialog.selectedUrls().isEmpty() || importBusy) return;
     const auto urls = fileDialog.selectedUrls();
-    RunImport([this, urls](std::stop_token stop) {
+    RunImport([this, urls](const std::function<bool()> &cancelled) {
         std::vector<std::filesystem::path> paths;
         for (const auto &url : urls) {
-            if (stop.stop_requested()) return std::function<void()>{};
+            if (cancelled()) return std::function<void()>{};
             paths.push_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
         }
         return std::function<void()>([this, paths = std::move(paths)] { OpenDocuments(paths); });

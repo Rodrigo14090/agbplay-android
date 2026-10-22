@@ -13,6 +13,7 @@
 #include <QTest>
 #include <QToolButton>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <fstream>
 
 class TestTouchUi : public QObject
@@ -134,12 +135,22 @@ private slots:
             QTimer heartbeat;
             connect(&heartbeat, &QTimer::timeout, &window, [&] { ++heartbeats; });
             heartbeat.start(5);
-            window.RunImport([](std::stop_token) {
+            window.RunImport([](const std::function<bool()> &) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
                 return std::function<void()>{};
             });
             QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
             QVERIFY(heartbeats >= 10);
+            bool publishedAfterCancel = false;
+            window.RunImport([&](const std::function<bool()> &) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                return std::function<void()>([&] { publishedAfterCancel = true; });
+            });
+            auto *cancel = window.importProgress->findChild<QPushButton *>();
+            QVERIFY(cancel);
+            QTest::mouseClick(cancel, Qt::LeftButton);
+            QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+            QVERIFY(!publishedAfterCancel);
             window.profile->dirty = false;
             QVERIFY(window.CloseGame());
             QVERIFY(!window.playbackEngine);
