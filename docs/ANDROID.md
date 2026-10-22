@@ -6,7 +6,14 @@ Requiere Android 9/API 28 o posterior y ABI `arm64-v8a`.
 ## Construcción
 
 Instalar CMake >=3.22, Ninja, Git, JDK 21, Android SDK y NDK 27.2.12479018.
-El SDK necesita `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`.
+El SDK necesita `platform-tools`, `platforms;android-35`, `platforms;android-36`,
+`build-tools;35.0.0` y `build-tools;36.0.0`. Qt 6.11 compila Java con SDK 36;
+el APK mantiene mínimo API 28 y target API 35.
+
+```bash
+sdkmanager 'platform-tools' 'platforms;android-35' 'platforms;android-36' \
+  'build-tools;35.0.0' 'build-tools;36.0.0' 'ndk;27.2.12479018'
+```
 Instalar Qt **6.11.2 para Android arm64-v8a**, incluyendo Qt Multimedia y las
 herramientas host de la misma versión. Se puede usar el instalador oficial o
 construir Qt Base, ShaderTools y Multimedia con `scripts/build-qt-source.sh` (descarga fuentes

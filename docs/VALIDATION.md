@@ -3,17 +3,31 @@
 Código del reproductor: `f26c022d0c05439ca09856fd0c17e9ce0d163749`.
 Los commits posteriores de documentación/scripts conservan ese código.
 
-[Compilación y artefacto ARM64 en GitHub Actions](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39716747975)
-— primera compilación completa desde ese commit. Ese empaquetado era release
-sin firma; la distribución instalable usa ahora Debug explícito y exige pasar
-la comprobación de firma antes de publicar el artefacto.
+## APK firmado entregado
+
+[Descargar el ZIP con el APK ARM64 firmado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39717872013/artifacts/12399534171)
+
+- APK: `agbplay-android-arm64-debug.apk`.
+- Commit de construcción/empaquetado: `59382e440950c3e0e5dafa9c29d88fdc7632eade`.
+- [Workflow aprobado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39717872013).
+- SHA-256 del APK: `f56f4dec854eb36b7a473d6de471668157dcdb9402f8146484d2634c8cf2d92f`.
+- 17 bibliotecas AArch64, todas con segmentos LOAD alineados a 16 KiB.
+- `apksigner verify --verbose`: firma v2 válida, un firmante.
+- Package `org.agbplay.android`, versión `1.0.0-android-dev`, mínimo API 28,
+  target API 35, compile SDK 36.
+
+Las primeras compilaciones generaron release sin firma. El script ahora fuerza
+`QT_ANDROID_DEPLOYMENT_TYPE=Debug` y sólo publica el artefacto después de verificar
+ABI, alineación y firma. El código nativo sigue compilado con optimización Release.
+El artefacto de Actions tiene retención de 90 días; se reconstruye con los scripts
+y todo el código fuente permanece en GitHub.
 
 ## Comprobado
 
 | Comprobación | Resultado |
 |---|---|
 | Motor NDK 27.2, Clang 18, libc++, API 28 | Compilado localmente, ELF AArch64, segmentos LOAD de 16 KiB |
-| APK Qt 6.11.2/Multimedia, JDK 21, SDK 35 | Compilado y publicado en GitHub Actions |
+| APK Qt 6.11.2/Multimedia, JDK 21, compile SDK 36 / target 35 | Compilado, firmado, verificado y publicado en GitHub Actions |
 | Qt6 Widgets con PortAudio en Linux | Compilado; arranque offscreen sin ROM |
 | Qt6 Widgets con Qt Multimedia 6.8 en Linux | Compilado; arranque offscreen sin ROM |
 | `safety`, `playback`, `fileio`, `resampler-parity` | 4/4 aprobadas localmente y en CI |
