@@ -15,14 +15,34 @@ public:
     static_assert(std::atomic<size_t>::is_always_lock_free);
     static_assert(std::atomic<float>::is_always_lock_free);
     static_assert(std::atomic<uint64_t>::is_always_lock_free);
+    static_assert(std::atomic<bool>::is_always_lock_free);
     // Queued/Writable are producer-side queries, Readable is consumer-side.
     // A third observer must use diagnostics instead of sampling both cursors.
     size_t Queued() const noexcept
     {
         const auto w = write.load(std::memory_order_relaxed);
-        return w - read.load(std::memory_order_acquire);
+        const auto r = read.load(std::memory_order_acquire);
+        const auto stored = w - r;
+        if (producerDiscardPending) {
+            const auto skipped = producerDiscardBefore - r;
+            if (skipped <= stored) return stored - skipped;
+            producerDiscardPending = false; // consumer has passed this boundary
+        }
+        return stored;
     }
-    size_t Writable() const noexcept { return Capacity - Queued(); }
+    size_t Writable() const noexcept {
+        // Discarded frames occupy physical storage until the consumer acknowledges
+        // them. Never reuse that storage from the producer thread prematurely.
+        return Capacity - (write.load(std::memory_order_relaxed) - read.load(std::memory_order_acquire));
+    }
+    // Producer-only transport discontinuity. Only the consumer moves its cursor;
+    // fresh PCM can be prefetched while a paused device still holds old frames.
+    void DiscardPending() noexcept {
+        producerDiscardBefore = write.load(std::memory_order_relaxed);
+        producerDiscardPending = true;
+        discardBefore.store(producerDiscardBefore, std::memory_order_relaxed);
+        discardRequested.store(true, std::memory_order_release);
+    }
     size_t Readable() const noexcept
     {
         return write.load(std::memory_order_acquire) - read.load(std::memory_order_relaxed);
@@ -53,6 +73,20 @@ public:
     // Read only available PCM, without padding or recording audio-output underruns.
     size_t Read(std::span<float> interleaved) noexcept
     {
+        ApplyDiscard();
+        return ReadFrames(interleaved);
+    }
+private:
+    void ApplyDiscard() noexcept {
+        if (!discardRequested.load(std::memory_order_relaxed)) return;
+        if (!discardRequested.exchange(false, std::memory_order_acquire)) return;
+        const auto r = read.load(std::memory_order_relaxed);
+        const auto boundary = discardBefore.load(std::memory_order_relaxed);
+        if (boundary - r <= write.load(std::memory_order_acquire) - r)
+            read.store(boundary, std::memory_order_release);
+    }
+    size_t ReadFrames(std::span<float> interleaved) noexcept
+    {
         const auto r = read.load(std::memory_order_relaxed);
         const auto count = std::min(interleaved.size() / 2, write.load(std::memory_order_acquire) - r);
         for (size_t i = 0; i < count; ++i) {
@@ -63,8 +97,10 @@ public:
         read.store(r + count, std::memory_order_release);
         return count;
     }
+public:
     size_t Take(std::span<float> interleaved) noexcept
     {
+        ApplyDiscard();
         const auto r = read.load(std::memory_order_relaxed);
         const auto requested = interleaved.size() / 2;
         const auto queued = write.load(std::memory_order_acquire) - r;
@@ -77,7 +113,7 @@ public:
         }
         // Write may advance between the observation and Read. Limit this read
         // to the observed count so counts and silence describe the same block.
-        Read(interleaved.first(count * 2));
+        ReadFrames(interleaved.first(count * 2));
         auto tail = interleaved.subspan(count * 2);
         std::fill(tail.begin(), tail.end(), 0.0f);
         return count;
@@ -115,6 +151,10 @@ private:
     std::array<sample, Capacity> data{};
     alignas(64) std::atomic<size_t> write{0};
     alignas(64) std::atomic<size_t> read{0};
+    std::atomic<size_t> discardBefore{0};
+    std::atomic<bool> discardRequested{false};
+    size_t producerDiscardBefore = 0;
+    mutable bool producerDiscardPending = false;
     std::atomic<uint64_t> underrunCallbacks{0};
     std::atomic<uint64_t> underrunFrames{0};
     std::atomic<size_t> minQueuedObserved{Capacity};

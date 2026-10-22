@@ -83,7 +83,10 @@ int main(int argc, char **argv) {
         checkContinuity(d);
         for (int n = 0; n < 20; ++n) {
             engine.SuspendOutput(true);
+            engine.Stop();
+            engine.DiscardBufferedAudio();
             engine.LoadSong(0); engine.Play(); engine.Pause(); engine.Pause();
+            engine.DiscardBufferedAudio();
             engine.SetOutputNumBuffers(1 + n % 16);
             engine.SuspendOutput(false);
             std::this_thread::sleep_for(std::chrono::milliseconds(3));

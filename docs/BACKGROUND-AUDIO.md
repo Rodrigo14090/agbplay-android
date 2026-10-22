@@ -31,8 +31,9 @@ log está limitado a 2000 bloques para evitar crecimiento indefinido.
 
 `PlaybackService` es un servicio Android del mismo proceso. No reproduce PCM en
 Java ni sustituye al motor: mantiene una MediaSession, la notificación, el foco
-y un PARTIAL_WAKE_LOCK durante la reproducción. El productor C++, la cola SPSC,
-la reserva de 30 ms y el callback float32 estéreo conservan su implementación.
+y un PARTIAL_WAKE_LOCK durante la reproducción. Se conservan la síntesis C++,
+los remuestreadores, la política normal de reserva de 30 ms y el callback
+float32 estéreo. La cola SPSC sólo añade el descarte de transporte descrito abajo.
 QAudioSink sólo recibe las órdenes explícitas de transporte; se eliminó el
 segundo gestor de foco y su sondeo periódico.
 
@@ -50,6 +51,14 @@ al pausar y se mantiene una sesión pausada durante un plazo nominal de cinco
 minutos para permitir reanudar desde la notificación. Después se detiene el
 servicio. Stop, cierre del juego, error y salida liberan servicio, notificación,
 MediaSession, foco y bloqueo de CPU.
+
+La pausa suspende primero el consumo y conserva el PCM pendiente para reanudar
+en orden. Stop y el cambio de canción con la salida suspendida descartan el PCM
+anterior mediante un marcador SPSC: sólo el consumidor avanza su cursor y el
+productor respeta el espacio físico todavía ocupado. Puede precalcular audio
+nuevo antes de reanudar sin reproducir la cola de la canción detenida. La reserva
+normal de 30 ms no cambia; las pruebas comprueban el descarte concurrente y la
+integridad estéreo, además de la paridad PCM existente.
 
 El servicio es START_NOT_STICKY y stopWithTask: no intenta reconstruir un motor
 C++ inexistente tras la muerte del proceso. Salir/cerrar la aplicación o quitar

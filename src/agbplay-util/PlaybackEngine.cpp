@@ -366,7 +366,7 @@ void PlaybackEngine::threadWorker()
                 // A control command may have changed the buffer preference
                 // between calculating target and acquiring this mutex.
                 if (target != bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load())) continue;
-                if (queued >= target && primingRequested) {
+                if ((queued >= target || (queued > 0 && queue.Writable() < blockFrames)) && primingRequested) {
                     primingRequested = false;
                     playerInvokeComplete.notify_all();
                 }
@@ -483,6 +483,11 @@ void PlaybackEngine::SuspendOutput(bool suspend)
         PrimeOutput(); // fill while the device is still suspended
         output->Suspend(false);
     }
+}
+
+void PlaybackEngine::DiscardBufferedAudio()
+{
+    InvokeAsPlayer([this] { queue.DiscardPending(); ++scheduleRevision; });
 }
 
 void PlaybackEngine::updateVisualizerState()

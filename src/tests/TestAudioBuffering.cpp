@@ -118,6 +118,55 @@ void BoundariesAndMeter()
     meter.Add(std::array<float, 2>{std::numeric_limits<float>::max(), -std::numeric_limits<float>::max()});
     CHECK(std::isfinite(meter.Rms())); // no float-to-integer overflow in telemetry
 }
+
+void TransportDiscard()
+{
+    AudioFrameQueue queue;
+    std::vector<sample> old(1600, {1, -1}), fresh(1600, {2, -2});
+    CHECK(queue.Put(old));
+    queue.DiscardPending();
+    CHECK(queue.Queued() == 0);
+    CHECK(queue.Writable() == AudioFrameQueue::Capacity - old.size());
+    CHECK(queue.Put(fresh)); // prefill before restarting a suspended device
+    CHECK(queue.Queued() == fresh.size());
+    std::array<float, 192> pcm;
+    CHECK(queue.Take(pcm) == 96);
+    for (size_t i = 0; i < 96; ++i) CHECK(pcm[2 * i] == 2 && pcm[2 * i + 1] == -2);
+    CHECK(queue.TakeDiagnostics().underrunCallbacks == 0);
+    queue.DiscardPending();
+    CHECK(queue.Put(old));
+    queue.DiscardPending(); // several transport changes before the device restarts
+    CHECK(queue.Put(fresh));
+    CHECK(queue.Take(pcm) == 96);
+    CHECK(pcm[0] == 2 && pcm[1] == -2);
+
+    AudioFrameQueue concurrent;
+    std::atomic<bool> done{false};
+    std::thread producer([&] {
+        std::array<sample, 64> block;
+        for (size_t base = 0; base < 200000; base += block.size()) {
+            for (size_t i = 0; i < block.size(); ++i) {
+                const auto value = static_cast<float>(base + i + 1);
+                block[i] = {value, -value};
+            }
+            if (base % (64 * 17) == 0) concurrent.DiscardPending();
+            while (!concurrent.Put(block)) std::this_thread::yield();
+            CHECK(concurrent.Queued() <= AudioFrameQueue::Capacity);
+        }
+        done.store(true, std::memory_order_release);
+    });
+    float previous = 0;
+    do {
+        const auto count = concurrent.Read(pcm);
+        for (size_t i = 0; i < count; ++i) {
+            CHECK(pcm[2 * i] > previous); // gaps allowed, never repeated/reordered frames
+            CHECK(pcm[2 * i + 1] == -pcm[2 * i]);
+            previous = pcm[2 * i];
+        }
+    } while (!done.load(std::memory_order_acquire) || concurrent.Readable());
+    producer.join();
+    CHECK(previous > 0);
+}
 void PcmTransport()
 {
     auto bytes = Fixture::RomBytes();
@@ -187,6 +236,7 @@ void ConcurrentFifo()
 }
 int main()
 {
+    TransportDiscard();
     AudioBufferPolicy policy(48000, 30);
     CHECK(policy.Target(2, 96) == 1440 && policy.LowWatermark(1440) == 1200);
     CHECK(policy.Target(16, AudioFrameQueue::Capacity) == AudioFrameQueue::Capacity / 2);

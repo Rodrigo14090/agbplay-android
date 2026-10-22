@@ -118,6 +118,13 @@ def main():
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
         wait_for(lambda s: s["uiTaskRuns"] == 1 and s["applicationState"] == 4)
         print("PASS deferred UI: control loop runs hidden, UI completion waits for foreground", flush=True)
+        time.sleep(1)
+        button = state()
+        adb("shell", "input", "tap", button["playX"], button["playY"])
+        continuous("restart-after-stop", 4)
+        media("stop")
+        paused("final-stop")
+        assert "PlaybackService" not in adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         print("PASS background lifecycle: service/notification controls, focus and safe stop", flush=True)
     finally:
         (OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))

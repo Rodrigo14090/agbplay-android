@@ -54,6 +54,9 @@ public:
                     {"rms", rms}, {"error", QString::fromStdString(error)}};
                 QJsonObject result = state;
                 result["uiTaskRuns"] = uiTaskRuns;
+                const auto play = window.playButton.mapToGlobal(window.playButton.rect().center());
+                result["playX"] = qRound(play.x() * window.devicePixelRatioF());
+                result["playY"] = qRound(play.y() * window.devicePixelRatioF());
                 QSaveFile file(directory + "/background-probe.json");
                 if (file.open(QIODevice::WriteOnly)) { file.write(QJsonDocument(result).toJson()); file.commit(); }
             });

@@ -70,6 +70,7 @@ public:
     void SetMaxLoops(int8_t maxLoops);
     void SetPlaybackVolume(float volume);
     void SuspendOutput(bool suspend);
+    void DiscardBufferedAudio(); // control thread, after suspending output; prefill resumes with fresh PCM
     std::string TakeError();
     AudioDiagnostics TakeAudioDiagnostics() noexcept;
 

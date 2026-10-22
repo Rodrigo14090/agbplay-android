@@ -598,8 +598,8 @@ void MainWindow::Pause()
         if (playing) androidPlayback->pause(); else Play();
         return;
     }
-    if (playing) playing = playbackEngine->Pause();
     if (!outputSuspended) { playbackEngine->SuspendOutput(true); outputSuspended = true; }
+    if (playing) playing = playbackEngine->Pause();
 #else
     playing = playbackEngine->Pause();
 #endif
@@ -619,9 +619,12 @@ void MainWindow::Stop()
         return;
     }
 
-    playbackEngine->Stop();
 #ifdef Q_OS_ANDROID
     if (!outputSuspended) { playbackEngine->SuspendOutput(true); outputSuspended = true; }
+#endif
+    playbackEngine->Stop();
+#ifdef Q_OS_ANDROID
+    playbackEngine->DiscardBufferedAudio();
 #endif
     playing = false;
 
@@ -729,6 +732,9 @@ void MainWindow::LoadSong(const std::string &title, uint16_t id)
         return;
 
     playbackEngine->LoadSong(id);
+#ifdef Q_OS_ANDROID
+    if (outputSuspended) playbackEngine->DiscardBufferedAudio();
+#endif
     statusWidget.songWidget.titleLabel.setText(QString::fromStdString(fmt::format("{} - {}", id, title)));
 #ifdef Q_OS_ANDROID
     androidPlayback->title(statusWidget.songWidget.titleLabel.text());
