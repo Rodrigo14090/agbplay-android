@@ -1,3 +1,19 @@
+# agbplay Android ARM64
+
+Port nativo del [agbplay oficial de ipatix](https://github.com/ipatix/agbplay),
+con historial y motor C++ originales conservados. Qt6 Widgets, salida Android
+Qt Multimedia/AAudio y PortAudio en escritorio.
+
+- [Construcción, uso y pruebas Android](docs/ANDROID.md)
+- [Procedencia, arquitectura e investigación #85/#96](docs/UPSTREAM.md)
+- [Estado de verificación](docs/VALIDATION.md)
+
+Esta rama contiene una adaptación en desarrollo. Las funciones implementadas,
+las compilaciones verificadas y las pruebas físicas pendientes se documentan
+por separado; no se presupone validación en un teléfono real.
+
+---
+
 # agbplay
 
 [![Windows Build (MinGW)](https://github.com/ipatix/agbplay/actions/workflows/build-common.yml/badge.svg)](https://github.com/ipatix/agbplay/actions/workflows/build-common.yml)

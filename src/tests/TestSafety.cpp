@@ -36,7 +36,7 @@ int main() {
     Reject([&] { ctx.m4aSongNumStart(2); }, "ctx.m4aSongNumStart(2);");
     Reject([&] { ctx.m4aSongNumStart(4); }, "ctx.m4aSongNumStart(4);");
     ctx.m4aSongNumStart(3);
-    Reject([&] { ctx.m4aSoundMain(); }, "ctx.m4aSoundMain();");
+    Reject([&] { for (int n = 0; n < 60; ++n) ctx.m4aSoundMain(); }, "zero-time GOTO loop");
     ctx.m4aMPlayAllStop(); ctx.m4aSoundClear();
     ctx.m4aSongNumStart(0);
     double energy = 0;

@@ -6,6 +6,11 @@
 #include <QAudioSink>
 #include <QMediaDevices>
 #include <QIODevice>
+#ifdef Q_OS_ANDROID
+#include <QCoreApplication>
+#include <QJniObject>
+#include <QTimer>
+#endif
 
 namespace {
 class QtAudioOutput final : public AudioOutput
@@ -31,6 +36,18 @@ class QtAudioOutput final : public AudioOutput
         std::array<float, 8192> scratch{};
     } source;
     std::unique_ptr<QAudioSink> sink;
+#ifdef Q_OS_ANDROID
+    QJniObject focus;
+    QTimer focusTimer;
+    bool appSuspended = false;
+    bool focusSuspended = false;
+    void UpdateFocus() {
+        const bool blocked = appSuspended || !focus.callMethod<jboolean>("hasFocus");
+        if (blocked == focusSuspended) return;
+        focusSuspended = blocked;
+        if (blocked) sink->suspend(); else sink->resume();
+    }
+#endif
 public:
     QtAudioOutput(uint32_t rate, void *context, Render render) : source(context, render) {
         QAudioFormat format;
@@ -51,9 +68,33 @@ public:
 #endif
         if (sink->error() != QAudio::NoError)
             throw Xcept("Qt could not start audio output (error {})", static_cast<int>(sink->error()));
+#ifdef Q_OS_ANDROID
+        focus = QJniObject("org/agbplay/android/AudioFocus", "(Landroid/content/Context;)V",
+                           QNativeInterface::QAndroidApplication::context().object());
+        if (!focus.isValid()) throw Xcept("Cannot initialize Android audio focus");
+        focus.callMethod<jboolean>("request");
+        QObject::connect(&focusTimer, &QTimer::timeout, &focusTimer, [this] { UpdateFocus(); });
+        focusTimer.start(100);
+        UpdateFocus();
+#endif
     }
-    ~QtAudioOutput() override { sink->stop(); }
-    void Suspend(bool suspended) override { if (suspended) sink->suspend(); else sink->resume(); }
+    ~QtAudioOutput() override {
+#ifdef Q_OS_ANDROID
+        focusTimer.stop();
+        focus.callMethod<void>("close");
+#endif
+        sink->stop();
+    }
+    void Suspend(bool suspended) override {
+#ifdef Q_OS_ANDROID
+        appSuspended = suspended;
+        if (suspended) focus.callMethod<void>("abandon");
+        else focus.callMethod<jboolean>("request");
+        UpdateFocus();
+#else
+        if (suspended) sink->suspend(); else sink->resume();
+#endif
+    }
 };
 }
 std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t rate, void *context, Render render)

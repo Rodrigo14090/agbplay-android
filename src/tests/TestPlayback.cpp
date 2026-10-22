@@ -52,6 +52,13 @@ int main(int argc, char **argv) {
             engine.Stop();
             engine.LoadSong(0); engine.Play();
         }
+        engine.LoadSong(3); engine.Play();
+        bool sequenceError = false;
+        for (int n = 0; n < 200; ++n) {
+            if (!engine.TakeError().empty()) { sequenceError = true; break; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (!sequenceError) throw std::runtime_error("Sequence error did not recover");
         engine.LoadSong(1);
         if (engine.TakeError().empty()) throw std::runtime_error("Missing invalid pointer error");
         engine.LoadSong(0); engine.Play();

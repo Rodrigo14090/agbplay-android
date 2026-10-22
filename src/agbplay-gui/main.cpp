@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "TouchDialogFilter.hpp"
 
 #ifndef AGBPLAY_QT_AUDIO
 #include <portaudiocpp/AutoSystem.hxx>
@@ -17,6 +18,10 @@ int main(int argc, char *argv[])
     portaudio::AutoSystem paSystem;
 #endif
 
+#ifdef Q_OS_ANDROID
+    TouchDialogFilter touchDialogs;
+    app.installEventFilter(&touchDialogs);
+#endif
     MainWindow mainWindow;
     mainWindow.show();
 

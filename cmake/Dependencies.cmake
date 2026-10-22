@@ -32,11 +32,8 @@ FetchContent_Declare(zip GIT_REPOSITORY https://github.com/nih-at/libzip.git GIT
 FetchContent_Declare(sndfile GIT_REPOSITORY https://github.com/libsndfile/libsndfile.git GIT_TAG 1.2.2 GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(zip sndfile)
 # Boost is header-only here (sinc and string replacement); no target binaries.
-FetchContent_Declare(boost_headers URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.tar.xz)
-FetchContent_GetProperties(boost_headers)
-if(NOT boost_headers_POPULATED)
-    FetchContent_Populate(boost_headers)
-endif()
+FetchContent_Declare(boost_headers URL https://github.com/boostorg/boost/releases/download/boost-1.88.0/boost-1.88.0-cmake.tar.xz SOURCE_SUBDIR no-cmake-project)
+FetchContent_MakeAvailable(boost_headers)
 add_library(agbplay-boost INTERFACE)
 file(GLOB boost_include_dirs "${boost_headers_SOURCE_DIR}/libs/*/include")
 target_include_directories(agbplay-boost INTERFACE ${boost_include_dirs})

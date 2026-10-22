@@ -75,6 +75,7 @@ bool DocumentAccess::ShareFile(const QString &path)
     context.callMethod<void>("startActivity", "(Landroid/content/Intent;)V", chooser.object());
     return true;
 #else
+    (void)path;
     return false;
 #endif
 }
