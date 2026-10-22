@@ -23,16 +23,23 @@ public final class DocumentImporterTest extends InstrumentationTestCase {
         directory = new File(context.getCacheDir(), "document-test");
         directory.mkdirs();
         TestProvider.fail = false;
+        TestProvider.name = "Pokémon #1 %.GBA";
     }
     protected void tearDown() throws Exception {
-        for (File file : directory.listFiles()) assertTrue(file.delete());
+        deleteChildren(directory);
         assertTrue(directory.delete());
         super.tearDown();
+    }
+    private void deleteChildren(File parent) {
+        for (File file : parent.listFiles()) {
+            if (file.isDirectory()) deleteChildren(file);
+            assertTrue(file.delete());
+        }
     }
     public void testEncodedUriPipeAndDisplayName() throws Exception {
         String path = DocumentImporter.importDocument(context, URI, directory.getPath());
         assertEquals(URI, TestProvider.lastUri);
-        assertTrue(path.endsWith(".gba"));
+        assertEquals("Pokémon #1 %.GBA", new File(path).getName());
         assertTrue(Arrays.equals(TestProvider.DATA, Files.readAllBytes(new File(path).toPath())));
         // A second import of the same document replaces the cache, not a new file.
         assertEquals(path, DocumentImporter.importDocument(context, URI, directory.getPath()));
@@ -85,5 +92,23 @@ public final class DocumentImporterTest extends InstrumentationTestCase {
             fail("Expected denied grant");
         } catch (SecurityException expected) { assertTrue(expected.getMessage().contains("Read permission denied")); }
         assertEquals(0, directory.list().length);
+    }
+    public void testGsfNamesAndUriIsolation() throws Exception {
+        TestProvider.name = "fixture.gsflib";
+        String library = DocumentImporter.importDocument(context, URI + "1", directory.getPath());
+        TestProvider.name = "01 canción.minigsf";
+        String first = DocumentImporter.importDocument(context, URI + "2", directory.getPath());
+        String other = DocumentImporter.importDocument(context, URI + "3", directory.getPath());
+        assertEquals("fixture.gsflib", new File(library).getName());
+        assertEquals("01 canción.minigsf", new File(first).getName());
+        assertFalse(first.equals(other));
+        assertTrue(Arrays.equals(TestProvider.DATA, Files.readAllBytes(new File(first).toPath())));
+    }
+    public void testUnsafeDisplayNameCannotEscape() throws Exception {
+        TestProvider.name = "../../escape\\outside.gsflib";
+        String imported = DocumentImporter.importDocument(context, URI, directory.getPath());
+        assertTrue(new File(imported).getCanonicalPath().startsWith(directory.getCanonicalPath() + File.separator));
+        assertFalse(new File(imported).getName().contains("/"));
+        assertFalse(new File(imported).getName().contains("\\"));
     }
 }

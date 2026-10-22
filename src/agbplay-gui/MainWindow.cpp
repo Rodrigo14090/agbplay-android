@@ -4,6 +4,8 @@
 #include <QToolButton>
 #include <QApplication>
 #include <QScroller>
+#include <QProgressDialog>
+#include <QSignalBlocker>
 
 #include "AboutWindow.hpp"
 #include "Debug.hpp"
@@ -110,6 +112,8 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
 
 MainWindow::~MainWindow()
 {
+    importWorker.request_stop();
+    if (importWorker.joinable()) importWorker.join();
     // Release gesture registrations while their widget targets still exist.
     for (auto *widget : findChildren<QWidget *>())
         if (QScroller::hasScroller(widget))
@@ -726,89 +730,93 @@ void MainWindow::PlaylistSwitchSong(int row)
     Play();
 }
 
+void MainWindow::RunImport(std::function<std::function<void()>(std::stop_token)> task)
+{
+    if (importBusy) return;
+    if (importWorker.joinable()) importWorker.join();
+    importBusy = true;
+    importProgress = new QProgressDialog("Importando documentos…", "Cancelar", 0, 0, this);
+    importProgress->setWindowModality(Qt::WindowModal);
+    importProgress->setMinimumDuration(0);
+    connect(importProgress, &QProgressDialog::canceled, this, [this] { importWorker.request_stop(); });
+    importProgress->show();
+    importWorker = std::jthread([this, task = std::move(task)](std::stop_token stop) {
+        std::function<void()> finish;
+        QString error;
+        try { finish = task(stop); }
+        catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
+        QMetaObject::invokeMethod(this, [this, finish = std::move(finish), error, stop] {
+            importBusy = false;
+            disconnect(importProgress, nullptr, this, nullptr);
+            importProgress->close();
+            importProgress->deleteLater();
+            importProgress = nullptr;
+            if (stop.stop_requested()) return;
+            if (!error.isEmpty()) { MBoxError("Document import", error.toStdString()); return; }
+            try { if (finish) finish(); }
+            catch (const std::exception &e) { MBoxError("Document import", e.what()); }
+        }, Qt::QueuedConnection);
+    });
+}
+
+void MainWindow::ImportGsfPaths(const std::vector<std::filesystem::path> &paths)
+{
+    if (!profile) return;
+    const auto library = Rom::Instance().IsGsf() ? Rom::Instance().GsfPath() : std::filesystem::path{};
+    const auto count = profile->songTableInfoPlayback.count;
+    const auto session = profile->sessionId;
+    RunImport([this, paths, library, count, session](std::stop_token stop) {
+        auto songs = Gsf::ReadPlaylist(paths, library, count, [&] { return stop.stop_requested(); });
+        return [this, songs = std::move(songs), session] {
+            if (!profile || profile->sessionId != session) return;
+            if (songs.empty()) { MBoxInfo("GSF playlist", "No MINIGSF files were found in the selected documents."); return; }
+            if (playlistWidget.listWidget.count() > 0 && QMessageBox::question(this, "GSF playlist",
+                "Keep the current songs before adding the imported playlist?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
+                playlistWidget.Clear();
+            const QSignalBlocker blocker(&playlistWidget);
+            playlistWidget.setUpdatesEnabled(false);
+            for (const auto &song : songs) playlistWidget.AddSong(song.title, song.id);
+            playlistWidget.setUpdatesEnabled(true);
+            profile->dirty = true;
+            saveButton.setEnabled(true);
+            saveProfileAction->setEnabled(true);
+        };
+    });
+}
+
 void MainWindow::ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath)
 {
-    if (!profile)
+    if (!profile || importBusy) return;
+    if (FileReader::cmpPathExt(gameFilePath, "zip")) { ImportGsfPaths({gameFilePath}); return; }
+#ifndef Q_OS_ANDROID
+    if (!gameFilePath.empty()) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto &entry : std::filesystem::directory_iterator(gameFilePath.parent_path()))
+            if (entry.is_regular_file() && FileReader::cmpPathExt(entry.path(), "minigsf")) paths.push_back(entry.path());
+        ImportGsfPaths(paths);
         return;
-
-    QFileDialog fileDialog(this);
-    fileDialog.setFileMode(QFileDialog::ExistingFiles);
-    fileDialog.setNameFilter("MINIGSF files (*.minigsf *.zip)");
-
-    std::vector<std::filesystem::path> pathsToLoad;
-
-    auto miniGsfFilterFunc = [](const std::filesystem::path &p) { return FileReader::cmpPathExt(p, "minigsf"); };
-
-    if (gameFilePath.empty()) {
-        /* If no path is passed, ask the user to specify them interactively */
-        if (!fileDialog.exec())
-            return;
-        try {
-            for (const auto &url : fileDialog.selectedUrls())
-                pathsToLoad.emplace_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
-        } catch (const std::exception &error) {
-            MBoxError("Open document", error.what());
-            return;
+    }
+#endif
+    QFileDialog dialog(this);
+    dialog.setWindowTitle("Seleccionar MINIGSF asociados o ZIP");
+    dialog.setFileMode(QFileDialog::ExistingFiles);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+#ifdef Q_OS_ANDROID
+    dialog.setOption(QFileDialog::DontUseNativeDialog, false);
+    dialog.setNameFilter("MINIGSF/ZIP (*);;MINIGSF (*.minigsf);;ZIP (*.zip)");
+#else
+    dialog.setNameFilter("MINIGSF/ZIP (*.minigsf *.zip)");
+#endif
+    if (!dialog.exec() || dialog.selectedUrls().isEmpty()) return;
+    const auto urls = dialog.selectedUrls();
+    RunImport([this, urls](std::stop_token stop) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto &url : urls) {
+            if (stop.stop_requested()) return std::function<void()>{};
+            paths.push_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
         }
-    } else {
-        if (FileReader::cmpPathExt(gameFilePath, "gsflib")) {
-            /* Main file loaded from raw file -> load minigsfs from same folder */
-            for (const auto &dirEnt : std::filesystem::directory_iterator(gameFilePath.parent_path())) {
-                if (!dirEnt.is_regular_file())
-                    continue;
-                if (miniGsfFilterFunc(dirEnt.path()))
-                    pathsToLoad.emplace_back(dirEnt.path());
-            }
-        } else if (FileReader::cmpPathExt(gameFilePath, "zip")) {
-            /* Main file loaded from zip file -> load minigsfs from same zip file */
-            pathsToLoad.emplace_back(gameFilePath);
-        } else {
-            throw std::logic_error(
-                "This case should not occur. Attempting to load MINIGSFs from invalid main file extension."
-            );
-        }
-    }
-
-    /* Store all songs together with their original file name (for sorting later) */
-    std::vector<std::tuple<std::filesystem::path, std::string, uint16_t>> songs;
-
-    auto op = [&songs](const std::filesystem::path &p, FileReader &fileReader) {
-        std::string title;
-        uint16_t id;
-        std::vector<uint8_t> gsfData(fileReader.size());
-        fileReader.read(gsfData);
-        Gsf::GetSongInfo(gsfData, title, id);
-        songs.emplace_back(p, std::move(title), id);
-        return true;
-    };
-
-    /* FileReader::forEachIn will run 'op' if 'miniGsfFilterFunc' returns true
-     * for a specific path. In our case 'op' will populate our song list to load. */
-    for (const std::filesystem::path &p : pathsToLoad)
-        FileReader::forEachInZipOrRaw(p, miniGsfFilterFunc, op);
-
-    /* Playlist order may be random, so sort by filename like normal for MINIGSFs. */
-    auto pathCmp = [](const auto &ta, const auto &tb) { return std::get<0>(ta).stem() < std::get<0>(tb).stem(); };
-    std::sort(songs.begin(), songs.end(), pathCmp);
-
-    /* Ask the user to replace all current songs if there are any */
-    if (playlistWidget.listWidget.count() > 0) {
-        const QString title = "Overwrite exiting playlist?";
-        QString message = "The playlist of the current profile already contains songs. ";
-        message += "Do you want to keep the current songs in the playlist before import?";
-        QMessageBox mbox(QMessageBox::Icon::Question, title, message, QMessageBox::Yes | QMessageBox::No, this);
-        if (mbox.exec() == QMessageBox::No)
-            playlistWidget.listWidget.clear();
-    }
-
-    for (auto &[_, title, id] : songs)
-        playlistWidget.AddSong(title, id);
-
-    if (songs.size() > 0) {
-        profile->dirty = true;
-        saveButton.setEnabled(true);
-        saveProfileAction->setEnabled(true);
-    }
+        return std::function<void()>([this, paths = std::move(paths)] { ImportGsfPaths(paths); });
+    });
 }
 
 bool MainWindow::AskGameCodeAndUpdateProfile()
@@ -871,14 +879,14 @@ bool MainWindow::AskGameCodeAndUpdateProfile()
 void MainWindow::LoadGame()
 {
     QFileDialog fileDialog(this);
-    fileDialog.setFileMode(QFileDialog::ExistingFile);
+    fileDialog.setFileMode(QFileDialog::ExistingFiles);
     fileDialog.setAcceptMode(QFileDialog::AcceptOpen);
-    fileDialog.setWindowTitle("Abrir ROM/GSF");
+    fileDialog.setWindowTitle("Abrir ROM/GSF y MINIGSF asociados");
 #ifdef Q_OS_ANDROID
     // Qt's Android platform plugin maps ExistingFile + AcceptOpen to SAF's
     // ACTION_OPEN_DOCUMENT. Unknown GBA/GSF MIME types must remain selectable.
     fileDialog.setOption(QFileDialog::DontUseNativeDialog, false);
-    fileDialog.setNameFilter("ROM/GSF/ZIP (*);;GBA (*.gba);;GSF (*.gsflib *.gsf);;ZIP (*.zip)");
+    fileDialog.setNameFilter("ROM/GSF/ZIP (*);;GBA (*.gba);;GSF (*.gsflib *.gsf *.minigsf);;ZIP (*.zip)");
 #else
     fileDialog.setNameFilter("GBA-ROMs (*.gba *.zip);;GSF-Lib (*.gsflib *.gsf *.zip)");
 #endif
@@ -889,16 +897,29 @@ void MainWindow::LoadGame()
     if (!fileDialog.exec())
         return;
 
-    if (fileDialog.selectedUrls().size() != 1)
-        return;
-    std::filesystem::path selectedFile;
-    try {
-        selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedUrls().at(0).toString(QUrl::FullyEncoded));
-    } catch (const std::exception &e) {
-        MBoxError("Open document", e.what());
+    if (fileDialog.selectedUrls().isEmpty() || importBusy) return;
+    const auto urls = fileDialog.selectedUrls();
+    RunImport([this, urls](std::stop_token stop) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto &url : urls) {
+            if (stop.stop_requested()) return std::function<void()>{};
+            paths.push_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
+        }
+        return std::function<void()>([this, paths = std::move(paths)] { OpenDocuments(paths); });
+    });
+}
+
+void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths)
+{
+    std::vector<std::filesystem::path> libraries, minis;
+    for (const auto &path : paths)
+        (FileReader::cmpPathExt(path, "minigsf") ? minis : libraries).push_back(path);
+    if (libraries.empty() && profile) { ImportGsfPaths(minis); return; }
+    if (libraries.size() != 1) {
+        MBoxError("Open documents", "Select one GBA/GSFLIB/ZIP and optionally its MINIGSF files. A MINIGSF alone needs an already loaded library.");
         return;
     }
-
+    const auto selectedFile = libraries.front();
     // A provider/read failure must leave the current game and playlist intact.
     if (!CloseGame())
         return;
@@ -909,7 +930,7 @@ void MainWindow::LoadGame()
     try {
         Rom::CreateInstance(selectedFile);
         profileCandidates = pm->GetProfiles(Rom::Instance());
-    } catch (Xcept &e) {
+    } catch (const std::exception &e) {
         MBoxError("Load Error", e.what());
         return;
     }
@@ -955,16 +976,6 @@ void MainWindow::LoadGame()
     saveButton.setEnabled(false);
     saveProfileAction->setEnabled(false);
 
-    if (Rom::Instance().IsGsf() && profile->playlist.size() == 0) {
-        const QString title = "Load Playlist from GSF set?";
-        QString message = "You just loaded a GSF set. ";
-        message += "The current profile does not contain any songs in the playlist.\n\n";
-        message += "Do you want to import the playlist from the accompanying MINIGSFs?";
-        QMessageBox mbox(QMessageBox::Icon::Question, title, message, QMessageBox::Yes | QMessageBox::No, this);
-        if (mbox.exec() == QMessageBox::Yes)
-            ProfileImportGsfPlaylist(selectedFile);
-    }
-
     infoWidget.romNameLineEdit.setText(QString::fromStdString(Rom::Instance().ReadString(0xA0, 12)));
     infoWidget.romCodeLineEdit.setText(QString::fromStdString(Rom::Instance().GetROMCode()));
     infoWidget.songTableLineEdit.setText(
@@ -974,6 +985,12 @@ void MainWindow::LoadGame()
 
     UpdateSoundMode();
 
+    if (Rom::Instance().IsGsf()) {
+        const auto inactive = std::count_if(profile->playerTablePlayback.begin(), profile->playerTablePlayback.end(),
+            [](const auto &player) { return player.maxTracks == 0; });
+        LogAppend(fmt::format("GSF profile: scanned players={}, configured players={}, playback players={}, inactive zero-track slots={}",
+            profile->playerTableScanned.size(), profile->playerTableConfig.size(), profile->playerTablePlayback.size(), inactive));
+    }
     try {
         playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile);
     } catch (const std::exception &e) {
@@ -993,6 +1010,18 @@ void MainWindow::LoadGame()
     benchmarkSelectedAction->setEnabled(true);
     profileSettings->setEnabled(true);
     profileMinigsfImport->setEnabled(true);
+
+    if (Rom::Instance().IsGsf() && profile->playlist.size() == 0) {
+        const QString title = "Load Playlist from GSF set?";
+        QString message = "You just loaded a GSF set. ";
+        message += "The current profile does not contain any songs in the playlist.\n\n";
+        message += "Do you want to import the playlist from the accompanying MINIGSFs?";
+        QMessageBox mbox(QMessageBox::Icon::Question, title, message, QMessageBox::Yes | QMessageBox::No, this);
+        if (mbox.exec() == QMessageBox::Yes) {
+            if (!minis.empty()) ImportGsfPaths(minis);
+            else ProfileImportGsfPlaylist(selectedFile);
+        }
+    }
 
     if (settings->lastOpenFileDirectory != selectedFile.parent_path()) {
         settings->lastOpenFileDirectory = selectedFile.parent_path();

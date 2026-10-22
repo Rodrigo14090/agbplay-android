@@ -78,6 +78,7 @@ public:
     std::string GetROMCode() const;
 
     bool IsGsf() const;
+    const std::filesystem::path &GsfPath() const { return gsfPath; }
 
 private:
     void CheckRange(size_t pos, size_t len) const

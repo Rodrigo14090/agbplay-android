@@ -10,6 +10,9 @@
 #include <filesystem>
 #include <memory>
 #include <thread>
+#include <functional>
+#include <stop_token>
+class QProgressDialog;
 #include <QListView>
 #include <QMainWindow>
 #include <QProgressBar>
@@ -41,6 +44,7 @@ public:
     ~MainWindow();
 
 private:
+    friend class TestTouchUi;
     void SetupMenuBar();
     void SetupToolBar();
     void SetupWidgets();
@@ -63,6 +67,9 @@ private:
     void PlaylistSwitchSong(int row);
 
     void ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath = "");
+    void ImportGsfPaths(const std::vector<std::filesystem::path> &paths);
+    void RunImport(std::function<std::function<void()>(std::stop_token)> task);
+    void OpenDocuments(const std::vector<std::filesystem::path> &paths);
     bool AskGameCodeAndUpdateProfile();
 
     void LoadGame();
@@ -160,6 +167,9 @@ private:
     /* File Export */
     std::unique_ptr<std::thread> exportThread;
     std::atomic<bool> exportBusy = false;
+    std::jthread importWorker;
+    QProgressDialog *importProgress = nullptr;
+    bool importBusy = false;
 
 signals:
     /* Use a signal instead of QMetaObject::invokeMethod for pre Qt 6.7 compatibility. */

@@ -1,5 +1,7 @@
 #include "MainWindow.hpp"
 #include "TouchPlayerLayout.hpp"
+#include "SyntheticGsf.hpp"
+#include "PlaybackEngine.hpp"
 
 #include <QAction>
 #include <QDir>
@@ -10,6 +12,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolButton>
+#include <QMessageBox>
+#include <fstream>
 
 class TestTouchUi : public QObject
 {
@@ -86,6 +90,69 @@ private slots:
         auto *menu = window.findChild<QToolButton *>("touchMenuButton");
         QVERIFY(menu && menu->isVisible() && menu->menu());
         QCOMPARE(menu->menu()->actions().size(), 5); // original four menus + Jump
+    }
+    void gsfYesNoAndRecovery()
+    {
+        QTemporaryDir files;
+        QVERIFY(files.isValid());
+        const auto save = [&](const QString &name, const auto &bytes) {
+            const std::filesystem::path path = (files.path() + "/" + name).toStdString();
+            std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+            return path;
+        };
+        const auto library = save("fixture.gsflib", Fixture::Psf(Fixture::ScannableRom()));
+        const auto mini = save("01.minigsf", Fixture::Psf({0}, "title=Prueba\n_lib=fixture.gsflib\n", 0x08000700));
+        for (auto answer : {QMessageBox::No, QMessageBox::Yes}) {
+            MainWindow window(nullptr, true);
+            window.resize(384, 854);
+            window.show();
+            int questions = 0, errors = 0;
+            QTimer respond;
+            connect(&respond, &QTimer::timeout, &window, [&] {
+                for (auto *widget : QApplication::topLevelWidgets()) {
+                    if (auto *box = qobject_cast<QMessageBox *>(widget); box && box->isVisible()) {
+                        if (box->windowTitle() == "Load Playlist from GSF set?") {
+                            ++questions;
+                            box->button(answer)->click();
+                        } else { ++errors; box->accept(); }
+                    }
+                }
+            });
+            respond.start(5);
+            window.OpenDocuments({library, mini});
+            QCOMPARE(questions, 1);
+            QCOMPARE(errors, 0);
+            QVERIFY(window.playbackEngine);
+            QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+            QCOMPARE(window.playlistWidget.listWidget.count(), answer == QMessageBox::Yes ? 1 : 0);
+            window.LoadSong("Prueba", 0);
+            window.Play();
+            settle();
+            QVERIFY(window.playing);
+            // A slow document provider cannot stop UI timer delivery.
+            int heartbeats = 0;
+            QTimer heartbeat;
+            connect(&heartbeat, &QTimer::timeout, &window, [&] { ++heartbeats; });
+            heartbeat.start(5);
+            window.RunImport([](std::stop_token) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                return std::function<void()>{};
+            });
+            QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+            QVERIFY(heartbeats >= 10);
+            window.profile->dirty = false;
+            QVERIFY(window.CloseGame());
+            QVERIFY(!window.playbackEngine);
+            const auto bad = save("broken.gsflib", std::vector<uint8_t>(40, 1));
+            window.OpenDocuments({bad});
+            QVERIFY(!window.playbackEngine);
+            QCOMPARE(errors, 1);
+            window.OpenDocuments({library, mini});
+            QVERIFY(window.playbackEngine);
+            QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+            window.profile->dirty = false;
+            QVERIFY(window.CloseGame());
+        }
     }
     void coldPhoneStartAndFontChanges()
     {

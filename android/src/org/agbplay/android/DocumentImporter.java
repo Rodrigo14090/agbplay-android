@@ -27,9 +27,18 @@ public final class DocumentImporter {
         ContentResolver resolver = context.getContentResolver();
         File root = new File(directory);
         if (!root.isDirectory() && !root.mkdirs()) throw new IOException("Cannot create private import directory");
-        String suffix = suffix(displayName(resolver, uri));
-        File destination = new File(root, digest(document) + suffix);
-        File temporary = File.createTempFile("pending-", ".tmp", root);
+        // Keep the actual filename for GSF _lib associations and playlist order.
+        // URI-specific directories prevent equally named documents colliding.
+        File documentRoot = new File(root, digest(document));
+        if (!documentRoot.isDirectory() && !documentRoot.mkdirs())
+            throw new IOException("Cannot create document import directory");
+        String name = displayName(resolver, uri).replace('\\', '_').replace('/', '_')
+                .replaceAll("[\\p{Cntrl}]", "_");
+        if (name.isEmpty() || name.equals(".") || name.equals("..") || name.length() > 180)
+            name = "document" + suffix(name);
+        if (suffix(name).equals(".bin") && !name.toLowerCase(Locale.ROOT).endsWith(".bin")) name += ".bin";
+        File destination = new File(documentRoot, name);
+        File temporary = File.createTempFile("pending-", ".tmp", documentRoot);
         try {
             // Providers may return a pipe with unknown size. Read the stream to EOF.
             // Keep SecurityException / FileNotFoundException details for the UI.
@@ -47,6 +56,8 @@ public final class DocumentImporter {
         } finally {
             // Failed reads never replace an existing import or leave partial files.
             Files.deleteIfExists(temporary.toPath());
+            String[] remaining = documentRoot.list();
+            if (remaining != null && remaining.length == 0) documentRoot.delete();
         }
     }
 

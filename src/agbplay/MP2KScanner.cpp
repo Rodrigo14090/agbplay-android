@@ -33,7 +33,8 @@ std::vector<MP2KScanner::Result> MP2KScanner::Scan(std::shared_ptr<Profile> prof
         if (!songtableValid)
             break;
 
-        if (profile && !profile->songTableInfoConfig.IsAuto())
+        if (profile && !profile->songTableInfoConfig.IsAuto() &&
+            profile->songTableInfoConfig.count != SongTableInfo::COUNT_AUTO)
             songCount = profile->songTableInfoConfig.count;
 
         if (profile && profile->playerTableConfig.size() != 0) {
@@ -45,7 +46,8 @@ std::vector<MP2KScanner::Result> MP2KScanner::Scan(std::shared_ptr<Profile> prof
             if (profile->mp2kSoundModeConfig.IsAuto())
                 break;
 
-            profile->mp2kSoundModeScanned = profile->mp2kSoundModeScanned;
+            profile->songTableInfoScanned = {songTablePos, songCount, profile->songTableInfoConfig.tableIdx};
+            profile->mp2kSoundModeScanned = profile->mp2kSoundModeConfig;
             break;
         }
 
@@ -692,6 +694,8 @@ bool MP2KScanner::IsValidSongTableEntry(size_t pos, bool relaxed) const
 
 bool MP2KScanner::IsValidPlayerTableEntry(size_t pos, bool &isBlankEntry) const
 {
+    if (!rom.ValidRange(pos, 12))
+        return false;
     /* A player table entry usually looks like this:
      * - RAM pointer
      * - RAM pointer

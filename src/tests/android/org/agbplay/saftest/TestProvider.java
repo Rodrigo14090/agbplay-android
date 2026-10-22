@@ -14,13 +14,14 @@ public final class TestProvider extends ContentProvider {
     public static final byte[] DATA = new byte[150003];
     public static String lastUri;
     public static boolean fail;
+    public static String name = "Pokémon #1 %.GBA";
     static { for (int i = 0; i < DATA.length; ++i) DATA[i] = (byte)(i * 31); }
     public boolean onCreate() { return true; }
     public String getType(Uri uri) { return "application/octet-stream"; }
     public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
         if (uri.getPath().contains("metadata-denied")) throw new SecurityException("Metadata unavailable");
         MatrixCursor cursor = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
-        cursor.addRow(new Object[]{"Pokémon #1 %.GBA", null}); // deliberately unknown size
+        cursor.addRow(new Object[]{name, null}); // deliberately unknown size
         return cursor;
     }
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {

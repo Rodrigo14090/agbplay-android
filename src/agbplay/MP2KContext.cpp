@@ -33,8 +33,22 @@ MP2KContext::MP2KContext(
     if (!rom.ValidRange(songTableInfo.pos, size_t(songTableInfo.count) * 8))
         throw Xcept("Song table extends beyond ROM");
     for (const auto &info : playerTableInfo)
-        if (info.maxTracks == 0 || info.maxTracks > 16)
+        if (info.maxTracks > 16)
             throw Xcept("Invalid player track count: {}", info.maxTracks);
+    if (std::none_of(playerTableInfo.begin(), playerTableInfo.end(), [](const auto &p) { return p.maxTracks != 0; }))
+        throw Xcept("Player table contains no active players (all track counts are zero)");
+    // GSF rippers zero unused player slots. Preserve their indices and their
+    // actual zero capacity, but never let a populated song use one of them.
+    for (size_t i = 0; i < songTableInfo.count; ++i) {
+        const size_t entry = songTableInfo.pos + i * 8;
+        const auto pointer = rom.ReadU32(entry);
+        if (!rom.ValidPointer(pointer))
+            continue; // Malformed/filler song pointers are rejected on selection.
+        const auto player = rom.ReadU8(entry + 4);
+        if (rom.ReadU8(pointer - AGB_MAP_ROM) != 0 && player < playerTableInfo.size() &&
+            playerTableInfo[player].maxTracks == 0)
+            throw Xcept("Song {} references player {} with zero tracks; incompatible player table/profile", i, player);
+    }
 
     for (size_t i = 0; i < playerTableInfo.size(); i++)
         players.emplace_back(*this, playerTableInfo.at(i), static_cast<uint8_t>(i));
@@ -164,6 +178,8 @@ void MP2KContext::m4aSongNumStop(uint16_t songId)
 void MP2KContext::m4aMPlayStart(uint8_t playerIdx, size_t songPos)
 {
     MP2KPlayer &player = players.at(playerIdx);
+    if (songPos != 0 && player.trackLimit == 0 && rom.ReadU8(songPos) != 0)
+        throw Xcept("Cannot start a song on inactive player {} (zero tracks)", playerIdx);
 
     if (player.usePriority && player.songHeaderPos != 0 && songPos != 0 && player.playing) {
         /* If priority of current song is higher than new song, do not start the song. */

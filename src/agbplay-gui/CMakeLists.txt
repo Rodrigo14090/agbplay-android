@@ -50,7 +50,7 @@ target_link_libraries(agbplay-gui PRIVATE agbplay-ui)
 
 if(BUILD_TESTING AND NOT ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS Test)
-    qt_add_executable(test-touch-ui ../tests/TestTouchUi.cpp ${AGBPLAY_GUI_QRC})
+    qt_add_executable(test-touch-ui ../tests/TestTouchUi.cpp ../tests/UiTestAudioOutput.cpp ${AGBPLAY_GUI_QRC})
     target_link_libraries(test-touch-ui PRIVATE agbplay-ui Qt6::Test)
     add_test(NAME touch-ui COMMAND test-touch-ui)
     set_tests_properties(touch-ui PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
