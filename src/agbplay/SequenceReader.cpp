@@ -387,6 +387,10 @@ void SequenceReader::cmdPlayNote(MP2KPlayer &player, MP2KTrack &trk, uint8_t cmd
     const MP2KChn *chn = nullptr;
     const uint8_t instrType = rom.ReadU8(instrPos);
 
+    if (ctx.sndChannels.size() + ctx.sq1Channels.size() + ctx.sq2Channels.size() +
+        ctx.waveChannels.size() + ctx.noiseChannels.size() >= 32768)
+        throw Xcept("Active channel budget exceeded");
+
     // enqueue actual note
     if (instrType & BANKDATA_TYPE_CGB) {
         const uint8_t sweep = rom.ReadU8(instrPos + 0x3);

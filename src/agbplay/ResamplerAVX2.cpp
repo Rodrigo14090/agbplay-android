@@ -49,6 +49,7 @@ bool SincResamplerAVX2::Process(std::span<float> buffer, float phaseInc, const F
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
@@ -150,6 +151,7 @@ bool BlepResamplerAVX2::Process(std::span<float> buffer, float phaseInc, const F
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
@@ -225,6 +227,7 @@ bool BlampResamplerAVX2::Process(std::span<float> buffer, float phaseInc, const 
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors

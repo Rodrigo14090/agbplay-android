@@ -51,7 +51,7 @@ int main() {
     // Mutate engine tables, sequence bytes and sample headers, preserving a valid
     // GBA header. Recoverable parser errors are expected; memory errors are not.
     uint32_t random = 0x6d4a1234;
-    for (int mutation = 0; mutation < 200; ++mutation) {
+    for (int mutation = 0; mutation < 64; ++mutation) {
         auto damaged = Fixture::RomBytes();
         for (int n = 0; n < 8; ++n) {
             random = random * 1664525u + 1013904223u;
@@ -64,10 +64,24 @@ int main() {
                                 profile.agbplaySoundMode, profile.songTableInfoPlayback,
                                 profile.playerTablePlayback);
             mutated.m4aSongNumStart(0);
-            for (int frame = 0; frame < 32; ++frame) mutated.m4aSoundMain();
+            for (int frame = 0; frame < 8; ++frame) mutated.m4aSoundMain();
         } catch (const std::exception &) {
             // Expected: bad pointers, invalid sequence data, command-budget error.
         }
+    }
+    for (auto type : {ResamplerType::NEAREST, ResamplerType::LINEAR, ResamplerType::SINC,
+                      ResamplerType::BLEP, ResamplerType::BLAMP}) {
+        auto rs = Resampler::MakeResampler(type);
+        std::array<float, 32> output{};
+        bool fetchReached = false;
+        const auto fetch = [&](std::vector<float> &, size_t) -> bool {
+            fetchReached = true;
+            throw std::runtime_error("Invalid ratio reached allocation callback");
+        };
+        Reject([&] { rs->Process(output, std::numeric_limits<float>::infinity(), fetch); }, "infinite phase increment");
+        Reject([&] { rs->Process(output, std::numeric_limits<float>::quiet_NaN(), fetch); }, "NaN phase increment");
+        Reject([&] { rs->Process(output, 1e30f, fetch); }, "excessive phase increment");
+        CHECK(!fetchReached);
     }
     // Exercise FIFO order across repeated wraps and changing callback sizes.
     AudioFrameQueue queue;

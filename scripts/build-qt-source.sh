@@ -23,7 +23,7 @@ cmake --build "$work/build-host" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
 cmake --install "$work/build-host"
 cmake -S "$work/src/qtbase-$version" -B "$work/build-android" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
-    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 \
+    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
     -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT" \
     -DQT_HOST_PATH="$work/host" -DCMAKE_INSTALL_PREFIX="$work/android" \
     -DCMAKE_BUILD_TYPE=Release -DQT_BUILD_TESTS=OFF -DQT_BUILD_EXAMPLES=OFF \

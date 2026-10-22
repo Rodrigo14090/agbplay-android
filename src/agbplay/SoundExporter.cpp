@@ -10,6 +10,7 @@
 #include "Xcept.hpp"
 
 #include <atomic>
+#include <array>
 #include <boost/algorithm/string/replace.hpp>
 #include <chrono>
 #include <climits>
@@ -88,6 +89,10 @@ void SoundExporter::Export()
     numThreads = std::min<size_t>(numThreads, 2); // bound per-song mixer memory on phones
 #endif
     std::vector<std::thread> workers;
+    struct JoinWorkers {
+        std::vector<std::thread> &threads;
+        ~JoinWorkers() { for (auto &thread : threads) if (thread.joinable()) thread.join(); }
+    } joinWorkers{workers};
     for (size_t i = 0; i < numThreads; i++)
         workers.emplace_back(threadFunc);
     for (auto &w : workers)
@@ -125,9 +130,16 @@ void SoundExporter::writeSilence(SNDFILE *ofile, double seconds)
 {
     if (seconds <= 0.0)
         return;
-    const size_t samples = static_cast<size_t>(std::round(settings.exportSampleRate * seconds));
-    std::vector<sample> silence(samples, {0.0f, 0.0f});
-    sf_writef_float(ofile, reinterpret_cast<float *>(silence.data()), static_cast<sf_count_t>(silence.size()));
+    if (!std::isfinite(seconds) || seconds > 3600)
+        throw Xcept("Invalid export padding duration");
+    size_t remaining = static_cast<size_t>(std::round(settings.exportSampleRate * seconds));
+    const std::array<sample, 1024> silence{};
+    while (remaining > 0) {
+        const auto count = static_cast<sf_count_t>(std::min(remaining, silence.size()));
+        if (sf_writef_float(ofile, reinterpret_cast<const float *>(silence.data()), count) != count)
+            throw Xcept("Writing silence failed: {}", sf_strerror(ofile));
+        remaining -= static_cast<size_t>(count);
+    }
 }
 
 size_t SoundExporter::exportSong(const std::filesystem::path &filePathPatt, size_t playlistIndex)

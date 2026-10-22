@@ -23,7 +23,8 @@ export QT_HOST_PATH=/path/to/Qt/6.11.2/gcc_64
 ```
 
 CMake descarga y compila las dependencias portables con el mismo NDK:
-fmt, nlohmann/json, zlib, libzip y libsndfile; Boost sólo aporta cabeceras.
+fmt, nlohmann/json, libzip y libsndfile; Boost sólo aporta cabeceras.
+Zlib procede del Android NDK.
 Se desactivan codecs y herramientas externas innecesarios, conservando exportación
 WAV float/PCM. No utiliza pkg-config host al compilar Android.
 

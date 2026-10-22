@@ -75,6 +75,7 @@ bool NearestResampler::Process(std::span<float> buffer, float phaseInc, const Fe
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = size_t(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
@@ -117,6 +118,7 @@ bool LinearResampler::Process(std::span<float> buffer, float phaseInc, const Fet
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
@@ -164,6 +166,7 @@ bool SincResampler::Process(std::span<float> buffer, float phaseInc, const Fetch
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
@@ -297,6 +300,7 @@ bool BlepResampler::Process(std::span<float> buffer, float phaseInc, const Fetch
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
@@ -380,6 +384,7 @@ bool BlampResampler::Process(std::span<float> buffer, float phaseInc, const Fetc
         return true;
 
     phaseInc = std::max(phaseInc, 0.0f);
+    ValidateRequest(phaseInc, buffer.size());
 
     size_t samplesRequired = static_cast<size_t>(phase + phaseInc * static_cast<float>(buffer.size()));
     // be sure and fetch one more sample in case of odd rounding errors
