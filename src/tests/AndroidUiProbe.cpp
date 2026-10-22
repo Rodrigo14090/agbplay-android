@@ -14,6 +14,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QWindow>
+#include <QAction>
 
 int main(int argc, char **argv)
 {
@@ -22,7 +23,8 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName("agbplay-ui-probe");
     MainWindow window(nullptr, true);
     QObject::disconnect(&window, &MainWindow::OpenRomRequested, nullptr, nullptr);
-    int openRequests = 0, menuRequests = 0;
+    QObject::disconnect(&window, &MainWindow::OpenGsfFolderRequested, nullptr, nullptr);
+    int openRequests = 0, menuRequests = 0, folderRequests = 0;
     bool actionBarChecked = false, actionBarPresent = false;
     QTimer::singleShot(500, &app, [&] {
         QNativeInterface::QAndroidApplication::runOnAndroidMainThread([] {
@@ -34,8 +36,10 @@ int main(int argc, char **argv)
         });
     });
     QObject::connect(&window, &MainWindow::OpenRomRequested, &app, [&] { ++openRequests; });
+    QObject::connect(&window, &MainWindow::OpenGsfFolderRequested, &app, [&] { ++folderRequests; });
     auto *open = window.findChild<QPushButton *>("openRomButton");
     auto *menu = window.findChild<QToolButton *>("touchMenuButton");
+    auto *folder = window.findChild<QAction *>("openGsfFolderAction");
     QObject::connect(menu->menu(), &QMenu::aboutToShow, &app, [&] { ++menuRequests; });
     window.show();
     const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -52,7 +56,14 @@ int main(int argc, char **argv)
                                {"x", qRound(center.x() * scale)}, {"y", qRound(center.y() * scale)},
                                {"width", widget->width()}, {"height", widget->height()}};
         };
+        const auto rect = menu->menu()->actionGeometry(folder);
+        const auto center = menu->menu()->mapToGlobal(rect.center());
+        const auto scale = window.devicePixelRatioF();
+        const QJsonObject folderState{{"visible", menu->menu()->isVisible() && folder->isVisible()},
+                                      {"x", qRound(center.x() * scale)}, {"y", qRound(center.y() * scale)},
+                                      {"height", rect.height()}};
         const QJsonObject state{{"qt", qVersion()}, {"open", describe(open)}, {"menu", describe(menu)},
+                                {"folder", folderState}, {"folderRequests", folderRequests},
                                 {"nativeMenuBar", window.menuBar()->isNativeMenuBar()},
                                 {"actionBarChecked", actionBarChecked}, {"actionBarPresent", actionBarPresent},
                                 {"openRequests", openRequests}, {"menuRequests", menuRequests},

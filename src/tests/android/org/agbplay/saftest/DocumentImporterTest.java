@@ -5,6 +5,7 @@ import android.content.ContentValues;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.DocumentsContract;
 import java.io.OutputStream;
 import android.test.InstrumentationTestCase;
 import org.agbplay.android.DocumentImporter;
@@ -110,5 +111,40 @@ public final class DocumentImporterTest extends InstrumentationTestCase {
         assertTrue(new File(imported).getCanonicalPath().startsWith(directory.getCanonicalPath() + File.separator));
         assertFalse(new File(imported).getName().contains("/"));
         assertFalse(new File(imported).getName().contains("\\"));
+    }
+    public void testFolderDiscoveryAndImport() throws Exception {
+        Uri tree = DocumentsContract.buildTreeDocumentUri("org.agbplay.saftest.documents", "root/with spaces %");
+        String[] files = DocumentImporter.listGsfDocuments(context, tree.toString());
+        assertEquals(6, files.length); // only the library and two distinct MINIGSFs
+        assertEquals("Pokémon.GSFLIB", files[1]);
+        assertEquals("01 canción.minigsf", files[3]);
+        assertEquals("opaque:lib# %", DocumentsContract.getDocumentId(Uri.parse(files[0])));
+        assertEquals("mini:one/encoded%", DocumentsContract.getDocumentId(Uri.parse(files[2])));
+        for (int i = 0; i < files.length; i += 2) {
+            String imported = DocumentImporter.importDocument(context, files[i], directory.getPath());
+            assertEquals(files[i + 1], new File(imported).getName());
+            assertTrue(Arrays.equals(TestProvider.DATA, Files.readAllBytes(new File(imported).toPath())));
+        }
+    }
+    public void testFolderEmptyDeniedAndInvalidUri() throws Exception {
+        String authority = "org.agbplay.saftest.documents";
+        assertEquals(0, DocumentImporter.listGsfDocuments(context,
+                DocumentsContract.buildTreeDocumentUri(authority, "empty").toString()).length);
+        try {
+            DocumentImporter.listGsfDocuments(context, URI);
+            fail("An individual document is not a folder grant");
+        } catch (IOException expected) { assertTrue(expected.getMessage().contains("folder")); }
+        try {
+            DocumentImporter.listGsfDocuments(context, DocumentsContract.buildTreeDocumentUri(authority, "denied").toString());
+            fail("Expected denied tree grant");
+        } catch (SecurityException expected) { assertTrue(expected.getMessage().contains("permission denied")); }
+        assertEquals(0, directory.list().length);
+    }
+    public void testFolderEntryLimit() throws Exception {
+        try {
+            DocumentImporter.listGsfDocuments(context,
+                    DocumentsContract.buildTreeDocumentUri("org.agbplay.saftest.documents", "large").toString());
+            fail("Expected folder entry limit");
+        } catch (IOException expected) { assertTrue(expected.getMessage().contains("Too many entries")); }
     }
 }

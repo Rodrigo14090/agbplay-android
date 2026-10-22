@@ -60,8 +60,14 @@ def test(name, width, height, density, font_scale):
         adb("shell", "input", "tap", button["x"], button["y"])
         wait_for(lambda s: s[count] > before, timeout=5)
         capture(f"{name}-{control}-clicked")
-    adb("shell", "input", "keyevent", "KEYCODE_BACK")
-    print(f"PASS {name}: actual Android taps reached Open ROM/GSF and Menu", flush=True)
+    current = wait_for(lambda s: s["folder"]["visible"])
+    folder = current["folder"]
+    assert folder["height"] >= 48, current
+    before = current["folderRequests"]
+    adb("shell", "input", "tap", folder["x"], folder["y"])
+    wait_for(lambda s: s["folderRequests"] > before, timeout=5)
+    capture(f"{name}-folder-clicked")
+    print(f"PASS {name}: actual Android taps reached Open ROM/GSF, Menu and Abrir carpeta GSF", flush=True)
 
 
 def main():

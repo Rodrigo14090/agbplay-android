@@ -2,6 +2,7 @@
 #include "Xcept.hpp"
 #include <QStandardPaths>
 #include <QUrl>
+#include <QDir>
 
 #ifdef Q_OS_ANDROID
 #include <QJniEnvironment>
@@ -20,6 +21,50 @@ void CheckJavaException(QJniEnvironment &env)
 }
 }
 #endif
+
+std::vector<DocumentAccess::FolderDocument> DocumentAccess::ListGsfFolder(const QString &directory)
+{
+    std::vector<FolderDocument> documents;
+    const QUrl url(directory);
+    if (url.scheme() != "content") {
+        const QDir folder(url.isLocalFile() ? url.toLocalFile() : directory);
+        if (!folder.exists()) throw Xcept("The selected GSF folder no longer exists");
+        for (const auto &file : folder.entryInfoList(QDir::Files | QDir::Readable, QDir::Name)) {
+            const auto ext = file.suffix().toLower();
+            if (ext == "gsflib" || ext == "gsf" || ext == "minigsf")
+                documents.push_back({QUrl::fromLocalFile(file.absoluteFilePath()).toString(), file.fileName()});
+            if (documents.size() > 65536) throw Xcept("Too many GSF files in the selected folder");
+        }
+        return documents;
+    }
+#ifdef Q_OS_ANDROID
+    QJniEnvironment env;
+    const auto importer = env.findClass("org/agbplay/android/DocumentImporter");
+    CheckJavaException(env);
+    if (!importer) throw Xcept("Android DocumentImporter class not found");
+    const auto method = env->GetStaticMethodID(importer, "listGsfDocuments",
+        "(Landroid/content/Context;Ljava/lang/String;)[Ljava/lang/String;");
+    CheckJavaException(env);
+    if (!method) throw Xcept("Android directory importer method not found");
+    const auto context = QNativeInterface::QAndroidApplication::context();
+    const auto tree = QJniObject::fromString(directory);
+    const auto result = static_cast<jobjectArray>(env->CallStaticObjectMethod(importer, method, context.object(), tree.object<jstring>()));
+    CheckJavaException(env);
+    const auto array = QJniObject::fromLocalRef(result);
+    if (!array.isValid()) throw Xcept("Android directory provider returned no file list");
+    const auto length = env->GetArrayLength(array.object<jobjectArray>());
+    if (length % 2 != 0) throw Xcept("Invalid Android directory file list");
+    for (jsize i = 0; i < length; i += 2) {
+        const auto uri = QJniObject::fromLocalRef(env->GetObjectArrayElement(array.object<jobjectArray>(), i));
+        const auto name = QJniObject::fromLocalRef(env->GetObjectArrayElement(array.object<jobjectArray>(), i + 1));
+        CheckJavaException(env);
+        documents.push_back({uri.toString(), name.toString()});
+    }
+    return documents;
+#else
+    throw Xcept("Android tree URIs require the Android document resolver");
+#endif
+}
 
 std::filesystem::path DocumentAccess::LocalCopy(const QString &document)
 {

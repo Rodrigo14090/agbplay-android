@@ -41,6 +41,42 @@ real con esta corrección.
 
 ## Importación Android
 
+### Abrir una carpeta de OST (1.0.8)
+
+Usa **Menú > Abrir carpeta GSF…** (o **File > Abrir carpeta GSF…** en
+escritorio), entra en la carpeta de un juego y pulsa **Usar esta carpeta** en
+el selector Android. La aplicación detecta el GSFLIB, carga el motor e importa
+sus MINIGSF sin seleccionar archivos individuales ni responder al diálogo de
+playlist. En la vista móvil se muestra la pestaña Playlist con sus títulos;
+la reproducción comienza con los controles habituales.
+
+Se leen los archivos directamente contenidos en esa carpeta. No se recorren
+subcarpetas de una colección de juegos: selecciona la carpeta del OST individual.
+Se ignoran portadas y otros tipos de archivo. Si hay varias bibliotecas, sólo
+entonces se pide elegir una; se importan sus selectores asociados mediante `_lib`,
+sin mezclar las canciones de las demás. Una biblioteca sin MINIGSF se carga sin
+preguntar por la playlist. El conjunto MP2K y los perfiles deben seguir siendo
+compatibles; los diálogos existentes de perfiles/código desconocido se mantienen
+cuando hagan falta.
+
+La selección nativa usa `ACTION_OPEN_DOCUMENT_TREE` y únicamente su permiso SAF
+de lectura. Los IDs del proveedor son opacos y se enumeran con `DocumentsContract`,
+sin convertirlos a rutas públicas ni añadir permisos generales. Qt conserva el
+permiso persistente cuando el proveedor lo admite. Android 11+ impide seleccionar
+la raíz del almacenamiento o toda Descargas; usa una subcarpeta del juego.
+
+La enumeración, copia y lectura de etiquetas se ejecutan en el trabajador de
+importación. Se conserva el límite de 64 MiB por documento y se limitan las
+consultas a 100000 entradas/65536 archivos GSF. Cancelar evita publicar resultados
+y se comprueba entre documentos; una consulta/lectura bloqueada del proveedor no
+se aborta a la fuerza. Se validan todos los selectores antes de cerrar el juego
+actual; una playlist malformada no lo descarta. El rango de IDs se verifica además
+contra el perfil final antes de inicializar la reproducción. La playlist de la
+carpeta sustituye la lista en memoria sin otro diálogo y queda disponible para
+guardar en el perfil. No se cambia el backend de audio ni los remuestreadores.
+
+### Archivos y ZIP
+
 En **Abrir ROM/GSF** se puede seleccionar un GSFLIB y sus MINIGSF simultáneamente
 usando la selección múltiple del selector Android. También se puede abrir sólo
 el GSFLIB: **No** inicia el motor sin playlist; **Yes** abre un selector para
@@ -91,6 +127,12 @@ proveedor lento simulado con entrega continua de temporizadores Qt.
 
 La instrumentación SAF Android comprueba nombres preservados, Unicode,
 documentos homónimos y rutas inseguras, además de pipes, Descargas y errores.
+También prueba enumeración de un árbol SAF con IDs opacos, copia de sus hijos,
+deduplicación, filtrado de portadas/directorios, límites y permisos denegados.
+La suite Qt abre una carpeta desde cero, importa sin diálogo, cambia de canción,
+conserva la reproducción ante selectores dañados/carpetas vacías y prueba elección
+y cancelación con varias bibliotecas. El probe Android verifica con toques ADB
+que la nueva acción del menú es accesible en los cuatro tamaños existentes.
 Las pruebas no necesitan ni publican ROMs comerciales.
 
 Para comparar con el motor oficial en un host x86 con las dependencias de

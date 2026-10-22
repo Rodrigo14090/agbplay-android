@@ -81,6 +81,8 @@ int main() {
     profile.playerTablePlayback = original;
     render();
     Reject([&] { Gsf::ReadPlaylist({a}, "other.gsflib", 4); });
+    CHECK(Gsf::ReadPlaylist({a}, "other.gsflib", 4, [] { return false; }, true).empty());
+    CHECK(Gsf::ReadPlaylist({b, a}, rom.GsfPath(), 4, [] { return false; }, true).size() == 2);
     Reject([&] { Gsf::ReadPlaylist({b}, rom.GsfPath(), 1); });
     Reject([&] { Gsf::ReadPlaylist({a}, rom.GsfPath(), 4, [] { return true; }); });
     const auto copiedA = save("zz-import/01.minigsf", Fixture::Psf({0}, "title=First\n_lib=fixture.gsflib\n"));

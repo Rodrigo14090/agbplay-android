@@ -12,6 +12,8 @@
 #include <thread>
 #include <functional>
 class QProgressDialog;
+namespace Gsf { struct Song; }
+namespace DocumentAccess { struct FolderDocument; }
 #include <QListView>
 #include <QMainWindow>
 #include <QProgressBar>
@@ -67,8 +69,13 @@ private:
 
     void ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath = "");
     void ImportGsfPaths(const std::vector<std::filesystem::path> &paths);
+    void ApplyGsfPlaylist(const std::vector<Gsf::Song> &songs, bool replaceWithoutPrompt);
     void RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task);
-    void OpenDocuments(const std::vector<std::filesystem::path> &paths);
+    void OpenDocuments(const std::vector<std::filesystem::path> &paths,
+                       const std::vector<Gsf::Song> *automaticPlaylist = nullptr);
+    void LoadGsfFolder();
+    void OpenGsfFolder(const QString &directory);
+    void ImportGsfFolder(const std::vector<DocumentAccess::FolderDocument> &documents, size_t library);
     bool AskGameCodeAndUpdateProfile();
 
     void LoadGame();
@@ -95,6 +102,7 @@ private:
 
     /* menu bar */
     QAction *openRomAction = nullptr;
+    QAction *openGsfFolderAction = nullptr;
     QAction *exportSongsAction = nullptr;
     QAction *exportStemsAction = nullptr;
     QAction *quickExportSongAction = nullptr;
@@ -175,4 +183,5 @@ signals:
     /* Use a signal instead of QMetaObject::invokeMethod for pre Qt 6.7 compatibility. */
     void LogMessageReceived(const std::string &msg);
     void OpenRomRequested();
+    void OpenGsfFolderRequested();
 };

@@ -7,6 +7,7 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
+import android.provider.DocumentsContract;
 import java.io.*;
 
 /** Exercises the actual ContentResolver with non-seekable pipes and opaque IDs. */
@@ -19,6 +20,31 @@ public final class TestProvider extends ContentProvider {
     public boolean onCreate() { return true; }
     public String getType(Uri uri) { return "application/octet-stream"; }
     public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
+        if (DocumentsContract.isTreeUri(uri)) {
+            String root = DocumentsContract.getTreeDocumentId(uri);
+            if (root.equals("denied")) throw new SecurityException("Tree read permission denied");
+            if (uri.getLastPathSegment().equals("children")) {
+                MatrixCursor children = new MatrixCursor(new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE});
+                if (root.equals("empty")) return children;
+                if (root.equals("large")) {
+                    for (int i = 0; i < 100001; i++) children.addRow(new Object[]{"irrelevant" + i, "cover.jpg", "image/jpeg"});
+                    return children;
+                }
+                children.addRow(new Object[]{"opaque:lib# %", "Pokémon.GSFLIB", "application/octet-stream"});
+                children.addRow(new Object[]{"mini:one/encoded%", "01 canción.minigsf", "application/octet-stream"});
+                children.addRow(new Object[]{"mini:two", "02.minigsf", "application/octet-stream"});
+                children.addRow(new Object[]{"mini:two", "02.minigsf", "application/octet-stream"}); // duplicate ID
+                children.addRow(new Object[]{"cover", "cover.jpg", "image/jpeg"});
+                children.addRow(new Object[]{"subfolder", "other.gsflib", DocumentsContract.Document.MIME_TYPE_DIR});
+                return children;
+            }
+            String id = DocumentsContract.getDocumentId(uri);
+            MatrixCursor metadata = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
+            metadata.addRow(new Object[]{id.equals("opaque:lib# %") ? "Pokémon.GSFLIB" :
+                    id.equals("mini:one/encoded%") ? "01 canción.minigsf" : "02.minigsf", null});
+            return metadata;
+        }
         if (uri.getPath().contains("metadata-denied")) throw new SecurityException("Metadata unavailable");
         MatrixCursor cursor = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
         cursor.addRow(new Object[]{name, null}); // deliberately unknown size

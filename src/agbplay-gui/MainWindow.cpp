@@ -136,6 +136,12 @@ void MainWindow::SetupMenuBar()
     connect(openRomAction, &QAction::triggered, this, &MainWindow::OpenRomRequested);
     connect(this, &MainWindow::OpenRomRequested, this, &MainWindow::LoadGame);
 
+    openGsfFolderAction = fileMenu->addAction("Abrir carpeta GSF…");
+    openGsfFolderAction->setObjectName("openGsfFolderAction");
+    openGsfFolderAction->setIcon(QIcon(":/icons/open-rom.ico"));
+    connect(openGsfFolderAction, &QAction::triggered, this, &MainWindow::OpenGsfFolderRequested);
+    connect(this, &MainWindow::OpenGsfFolderRequested, this, &MainWindow::LoadGsfFolder);
+
     fileMenu->addSeparator();
 
     saveProfileAction = fileMenu->addAction("Save Profile");
@@ -432,6 +438,8 @@ void MainWindow::SetupTouchInterface()
     menu->setMinimumSize(64, 48);
     menu->setPopupMode(QToolButton::InstantPopup);
     auto *popup = new QMenu(menu);
+    // A direct entry in the touch menu; no additional cramped control row.
+    popup->addAction(openGsfFolderAction);
     for (auto *action : menuBar()->actions())
         if (action->menu())
             popup->addMenu(action->menu());
@@ -772,18 +780,24 @@ void MainWindow::ImportGsfPaths(const std::vector<std::filesystem::path> &paths)
         return [this, songs = std::move(songs), session] {
             if (!profile || profile->sessionId != session) return;
             if (songs.empty()) { MBoxInfo("GSF playlist", "No MINIGSF files were found in the selected documents."); return; }
-            if (playlistWidget.listWidget.count() > 0 && QMessageBox::question(this, "GSF playlist",
-                "Keep the current songs before adding the imported playlist?", QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
-                playlistWidget.Clear();
-            const QSignalBlocker blocker(&playlistWidget);
-            playlistWidget.setUpdatesEnabled(false);
-            for (const auto &song : songs) playlistWidget.AddSong(song.title, song.id);
-            playlistWidget.setUpdatesEnabled(true);
-            profile->dirty = true;
-            saveButton.setEnabled(true);
-            saveProfileAction->setEnabled(true);
+            ApplyGsfPlaylist(songs, false);
         };
     });
+}
+
+void MainWindow::ApplyGsfPlaylist(const std::vector<Gsf::Song> &songs, bool replaceWithoutPrompt)
+{
+    const bool replace = replaceWithoutPrompt || (playlistWidget.listWidget.count() > 0 &&
+        QMessageBox::question(this, "GSF playlist", "Keep the current songs before adding the imported playlist?",
+                              QMessageBox::Yes | QMessageBox::No) == QMessageBox::No);
+    const QSignalBlocker blocker(&playlistWidget);
+    playlistWidget.setUpdatesEnabled(false);
+    if (replace) playlistWidget.Clear();
+    for (const auto &song : songs) playlistWidget.AddSong(song.title, song.id);
+    playlistWidget.setUpdatesEnabled(true);
+    profile->dirty = true;
+    saveButton.setEnabled(true);
+    saveProfileAction->setEnabled(true);
 }
 
 void MainWindow::ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath)
@@ -911,7 +925,75 @@ void MainWindow::LoadGame()
     });
 }
 
-void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths)
+void MainWindow::LoadGsfFolder()
+{
+    if (importBusy) return;
+    QFileDialog dialog(this);
+    dialog.setWindowTitle("Seleccionar carpeta del OST GSF");
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setOption(QFileDialog::ShowDirsOnly, true);
+#ifdef Q_OS_ANDROID
+    // Qt maps this mode to ACTION_OPEN_DOCUMENT_TREE, including its URI grant.
+    dialog.setOption(QFileDialog::DontUseNativeDialog, false);
+#endif
+    if (dialog.exec() && !dialog.selectedUrls().isEmpty())
+        OpenGsfFolder(dialog.selectedUrls().front().toString(QUrl::FullyEncoded));
+}
+
+void MainWindow::OpenGsfFolder(const QString &directory)
+{
+    RunImport([this, directory](const std::function<bool()> &cancelled) {
+        auto documents = DocumentAccess::ListGsfFolder(directory);
+        if (cancelled()) return std::function<void()>{};
+        return std::function<void()>([this, documents = std::move(documents)] {
+            std::vector<size_t> libraries;
+            QStringList names;
+            for (size_t i = 0; i < documents.size(); ++i) {
+                if (documents[i].name.endsWith(".gsflib", Qt::CaseInsensitive) ||
+                    documents[i].name.endsWith(".gsf", Qt::CaseInsensitive)) {
+                    libraries.push_back(i);
+                    names.push_back(documents[i].name);
+                }
+            }
+            if (libraries.empty()) {
+                MBoxError("Carpeta GSF", "No GSFLIB was found. Select the OST folder containing the GSFLIB and MINIGSF files directly, not its parent folder.");
+                return;
+            }
+            size_t library = libraries.front();
+            if (libraries.size() > 1) {
+                bool ok = false;
+                const auto name = QInputDialog::getItem(this, "Carpeta GSF",
+                    "Hay varias bibliotecas. ¿Qué conjunto deseas abrir?", names, 0, false, &ok);
+                if (!ok) return;
+                library = libraries.at(static_cast<size_t>(names.indexOf(name)));
+            }
+            ImportGsfFolder(documents, library);
+        });
+    });
+}
+
+void MainWindow::ImportGsfFolder(const std::vector<DocumentAccess::FolderDocument> &documents, size_t library)
+{
+    RunImport([this, documents, library](const std::function<bool()> &cancelled) {
+        if (cancelled()) return std::function<void()>{};
+        const auto lib = DocumentAccess::LocalCopy(documents.at(library).uri);
+        std::vector<std::filesystem::path> minis;
+        for (const auto &document : documents) {
+            if (cancelled()) return std::function<void()>{};
+            if (document.name.endsWith(".minigsf", Qt::CaseInsensitive))
+                minis.push_back(DocumentAccess::LocalCopy(document.uri));
+        }
+        // Fully parse before closing the current game; never publish a partial
+        // import. Ignore only valid selectors associated with another library.
+        auto songs = Gsf::ReadPlaylist(minis, lib, UINT16_MAX, cancelled, true);
+        return std::function<void()>([this, lib, songs = std::move(songs)] {
+            OpenDocuments({lib}, &songs);
+        });
+    });
+}
+
+void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths,
+                               const std::vector<Gsf::Song> *automaticPlaylist)
 {
     std::vector<std::filesystem::path> libraries, minis;
     for (const auto &path : paths)
@@ -960,6 +1042,18 @@ void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths)
             CloseGame();
             MBoxError("GSF Load Error", "Unable to create profile with unknown game code. Please try again and specify a valid game code");
             return;
+        }
+    }
+
+    if (automaticPlaylist) {
+        for (const auto &song : *automaticPlaylist) {
+            if (song.id >= profile->songTableInfoPlayback.count) {
+                MBoxError("GSF playlist", fmt::format("MINIGSF '{}' selects song {}, outside the detected song table ({})",
+                    song.filename.string(), song.id, profile->songTableInfoPlayback.count));
+                profile->dirty = false;
+                CloseGame();
+                return;
+            }
         }
     }
 
@@ -1013,7 +1107,16 @@ void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths)
     profileSettings->setEnabled(true);
     profileMinigsfImport->setEnabled(true);
 
-    if (Rom::Instance().IsGsf() && profile->playlist.size() == 0) {
+    if (automaticPlaylist) {
+        if (!automaticPlaylist->empty()) {
+            ApplyGsfPlaylist(*automaticPlaylist, true);
+            playlistFocus = true;
+            playlistWidget.listWidget.setCurrentRow(0);
+            if (auto *tabs = findChild<QTabWidget *>("compactNavigation"); tabs && tabs->isVisible())
+                tabs->setCurrentIndex(1);
+        }
+        LogAppend(fmt::format("GSF folder: imported {} associated MINIGSF songs", automaticPlaylist->size()));
+    } else if (Rom::Instance().IsGsf() && profile->playlist.size() == 0) {
         const QString title = "Load Playlist from GSF set?";
         QString message = "You just loaded a GSF set. ";
         message += "The current profile does not contain any songs in the playlist.\n\n";

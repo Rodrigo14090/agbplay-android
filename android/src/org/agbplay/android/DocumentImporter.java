@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
+import android.provider.DocumentsContract;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -16,10 +17,46 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.HashSet;
 
 /** Only the SAF grant is used. No real-path lookup or storage permission is needed. */
 public final class DocumentImporter {
     private DocumentImporter() {}
+
+    /** URI/name pairs for files directly inside the chosen OST directory.
+     * IDs are opaque: never interpret them as filesystem paths. Runs off the UI thread.
+     */
+    public static String[] listGsfDocuments(Context context, String directory) throws IOException {
+        Uri tree = Uri.parse(directory);
+        if (!"content".equals(tree.getScheme()) || !DocumentsContract.isTreeUri(tree))
+            throw new IOException("Select a GSF folder using the Android directory picker");
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree,
+                DocumentsContract.getTreeDocumentId(tree));
+        String[] columns = {DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE};
+        ArrayList<String> result = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        try (Cursor cursor = context.getContentResolver().query(children, columns, null, null, null)) {
+            if (cursor == null) throw new IOException("Document provider could not list the selected folder");
+            int idColumn = cursor.getColumnIndexOrThrow(columns[0]);
+            int nameColumn = cursor.getColumnIndexOrThrow(columns[1]);
+            int mimeColumn = cursor.getColumnIndexOrThrow(columns[2]);
+            int rows = 0;
+            while (cursor.moveToNext()) {
+                if (++rows > 100000) throw new IOException("Too many entries in the selected folder");
+                String id = cursor.getString(idColumn), name = cursor.getString(nameColumn), mime = cursor.getString(mimeColumn);
+                if (id == null || name == null || DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) continue;
+                String ext = suffix(name);
+                if (!(ext.equals(".gsflib") || ext.equals(".gsf") || ext.equals(".minigsf"))) continue;
+                if (!seen.add(id)) continue;
+                if (seen.size() > 65536) throw new IOException("Too many GSF files in the selected folder");
+                result.add(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString());
+                result.add(name);
+            }
+        }
+        return result.toArray(new String[0]);
+    }
 
     public static String importDocument(Context context, String document, String directory) throws IOException {
         Uri uri = Uri.parse(document); // Preserve escaped document IDs; never rebuild the path.

@@ -194,7 +194,7 @@ Gsf::Song Gsf::ReadSong(std::span<const uint8_t> gsfData)
 
 std::vector<Gsf::Song> Gsf::ReadPlaylist(const std::vector<std::filesystem::path> &paths,
                                       const std::filesystem::path &library, uint16_t songCount,
-                                      const std::function<bool()> &cancelled)
+                                      const std::function<bool()> &cancelled, bool matchingLibraryOnly)
 {
     std::vector<Song> songs;
     const auto lower = [](std::string value) {
@@ -217,9 +217,12 @@ std::vector<Gsf::Song> Gsf::ReadPlaylist(const std::vector<std::filesystem::path
                 const bool memberPaths = archive && !library.is_absolute();
                 const auto resolved = memberPaths ? (filename.parent_path() / dependency).lexically_normal() : dependency.filename();
                 const auto expected = memberPaths ? library.lexically_normal() : library.filename();
-                if (song.library.empty() || dependency.is_absolute() || (!library.empty() &&
-                    lower(resolved.generic_string()) != lower(expected.generic_string())))
+                if (song.library.empty() || dependency.is_absolute())
+                    throw Xcept("MINIGSF '{}' has no valid relative _lib association", filename.string());
+                if (!library.empty() && lower(resolved.generic_string()) != lower(expected.generic_string())) {
+                    if (matchingLibraryOnly) return true;
                     throw Xcept("MINIGSF '{}' references '{}', not the loaded library '{}'", filename.string(), song.library, library.string());
+                }
                 if (song.id >= songCount)
                     throw Xcept("MINIGSF '{}' selects song {}, outside the detected song table ({})", filename.string(), song.id, songCount);
                 songs.push_back(std::move(song));

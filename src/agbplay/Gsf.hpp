@@ -20,6 +20,7 @@ namespace Gsf
     Song ReadSong(std::span<const uint8_t> gsfData);
     std::vector<Song> ReadPlaylist(const std::vector<std::filesystem::path> &paths,
                                  const std::filesystem::path &library, uint16_t songCount,
-                                 const std::function<bool()> &cancelled = [] { return false; });
+                                 const std::function<bool()> &cancelled = [] { return false; },
+                                 bool matchingLibraryOnly = false);
     std::string GuessGameCodeFromPath(const std::filesystem::path &p);
 }    // namespace Gsf

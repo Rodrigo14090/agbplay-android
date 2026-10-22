@@ -2,6 +2,7 @@
 #include "TouchPlayerLayout.hpp"
 #include "SyntheticGsf.hpp"
 #include "PlaybackEngine.hpp"
+#include "DocumentAccess.hpp"
 
 #include <QAction>
 #include <QDir>
@@ -14,6 +15,7 @@
 #include <QToolButton>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QInputDialog>
 #include <fstream>
 
 class TestTouchUi : public QObject
@@ -90,7 +92,130 @@ private slots:
         QCOMPARE(open.count(), 2);
         auto *menu = window.findChild<QToolButton *>("touchMenuButton");
         QVERIFY(menu && menu->isVisible() && menu->menu());
-        QCOMPARE(menu->menu()->actions().size(), 5); // original four menus + Jump
+        QCOMPARE(menu->menu()->actions().size(), 6); // folder + original four menus + Jump
+        auto *folder = window.findChild<QAction *>("openGsfFolderAction");
+        QVERIFY(folder && menu->menu()->actions().contains(folder));
+        disconnect(&window, &MainWindow::OpenGsfFolderRequested, nullptr, nullptr);
+        QSignalSpy folderOpen(&window, &MainWindow::OpenGsfFolderRequested);
+        folder->trigger();
+        QCOMPARE(folderOpen.count(), 1);
+        QCOMPARE(open.count(), 2);
+    }
+    void automaticGsfFolder()
+    {
+        QTemporaryDir files;
+        QVERIFY(files.isValid());
+        const auto save = [&](const QString &name, const auto &bytes) {
+            const auto path = (files.path() + "/" + name).toStdString();
+            std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        };
+        save("fixture.gsflib", Fixture::Psf(Fixture::ScannableRom()));
+        save("01.minigsf", Fixture::Psf({0}, "title=Primero\n_lib=fixture.gsflib\n"));
+        save("02.minigsf", Fixture::Psf({1}, "title=Segundo\n_lib=fixture.gsflib\n"));
+        save("03.minigsf", Fixture::Psf({2}, "title=Other library\n_lib=another.gsflib\n"));
+        save("cover.jpg", std::vector<uint8_t>{1, 2});
+        QDir(files.path()).mkdir("nested");
+        save("nested/unused.gsflib", Fixture::Psf(Fixture::ScannableRom()));
+        const auto folderUrl = QUrl::fromLocalFile(files.path()).toString();
+        const auto documents = DocumentAccess::ListGsfFolder(folderUrl);
+        QCOMPARE(documents.size(), size_t(4));
+        MainWindow window(nullptr, true);
+        window.resize(384, 854);
+        window.show();
+        int dialogs = 0;
+        QTimer dismiss;
+        connect(&dismiss, &QTimer::timeout, &window, [&] {
+            for (auto *widget : QApplication::topLevelWidgets())
+                if (auto *box = qobject_cast<QMessageBox *>(widget); box && box->isVisible()) {
+                    ++dialogs;
+                    box->done(QMessageBox::No);
+                }
+        });
+        dismiss.start(5);
+        window.OpenGsfFolder(folderUrl); // no prior library or manual playlist selection
+        QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+        QCOMPARE(dialogs, 0);
+        QVERIFY(window.playbackEngine);
+        QCOMPARE(window.playlistWidget.listWidget.count(), 2);
+        QCOMPARE(window.playlistWidget.listWidget.item(0)->text(), QString("Primero"));
+        QCOMPARE(window.playlistWidget.listWidget.item(1)->data(Qt::UserRole).toUInt(), 1u);
+        QCOMPARE(window.findChild<QTabWidget *>("compactNavigation")->currentIndex(), 1);
+        window.PlaylistSwitchSong(1);
+        settle();
+        QVERIFY(window.playing);
+        // A malformed selector fails before closing the currently playing game.
+        save("broken.minigsf", std::vector<uint8_t>{1, 2});
+        auto *engine = window.playbackEngine.get();
+        window.OpenGsfFolder(folderUrl);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+        QTRY_COMPARE(dialogs, 1);
+        QCOMPARE(window.playbackEngine.get(), engine);
+        QCOMPARE(window.playlistWidget.listWidget.count(), 2);
+        QFile::remove(files.path() + "/broken.minigsf");
+        // No library: report it, keep the current game, do not scan descendants.
+        QTemporaryDir empty;
+        window.OpenGsfFolder(QUrl::fromLocalFile(empty.path()).toString());
+        QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+        QTRY_COMPARE(dialogs, 2);
+        QCOMPARE(window.playbackEngine.get(), engine);
+        window.profile->dirty = false;
+        QVERIFY(window.CloseGame());
+    }
+    void ambiguousAndLibraryOnlyFolders()
+    {
+        QTemporaryDir files;
+        QVERIFY(files.isValid());
+        const auto save = [&](const QString &name, const auto &bytes) {
+            std::ofstream((files.path() + "/" + name).toStdString(), std::ios::binary)
+                .write(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        };
+        save("alpha.gsflib", Fixture::Psf(Fixture::ScannableRom()));
+        save("beta.gsflib", Fixture::Psf(Fixture::ScannableRom()));
+        save("01.minigsf", Fixture::Psf({0}, "title=Alpha\n_lib=alpha.gsflib\n"));
+        save("02.minigsf", Fixture::Psf({1}, "title=Beta\n_lib=beta.gsflib\n"));
+        MainWindow window(nullptr, true);
+        window.show();
+        int choices = 0, messages = 0;
+        bool accept = false;
+        QTimer respond;
+        connect(&respond, &QTimer::timeout, &window, [&] {
+            for (auto *widget : QApplication::topLevelWidgets()) {
+                if (auto *input = qobject_cast<QInputDialog *>(widget); input && input->isVisible()) {
+                    ++choices;
+                    if (accept) { input->setTextValue("beta.gsflib"); input->accept(); }
+                    else input->reject();
+                } else if (auto *box = qobject_cast<QMessageBox *>(widget); box && box->isVisible()) {
+                    ++messages;
+                    box->done(QMessageBox::No);
+                }
+            }
+        });
+        respond.start(5);
+        const auto folder = QUrl::fromLocalFile(files.path()).toString();
+        window.OpenGsfFolder(folder);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+        QCOMPARE(choices, 1);
+        QVERIFY(!window.playbackEngine); // cancel does not guess a library
+        accept = true;
+        window.OpenGsfFolder(folder);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+        QCOMPARE(choices, 2);
+        QCOMPARE(messages, 0);
+        QVERIFY(window.playbackEngine);
+        QCOMPARE(window.playlistWidget.listWidget.count(), 1);
+        QCOMPARE(window.playlistWidget.listWidget.item(0)->text(), QString("Beta"));
+        window.profile->dirty = false;
+        QVERIFY(window.CloseGame());
+        for (const QString name : {"alpha.gsflib", "01.minigsf", "02.minigsf"})
+            QVERIFY(QFile::remove(files.path() + "/" + name));
+        window.OpenGsfFolder(folder);
+        QTRY_VERIFY_WITH_TIMEOUT(!window.importBusy, 5000);
+        QVERIFY(window.playbackEngine); // a library without minis needs no playlist dialog
+        QCOMPARE(window.playlistWidget.listWidget.count(), 0);
+        QCOMPARE(choices, 2);
+        QCOMPARE(messages, 0);
+        window.profile->dirty = false;
+        QVERIFY(window.CloseGame());
     }
     void gsfYesNoAndRecovery()
     {

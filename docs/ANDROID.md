@@ -120,8 +120,13 @@ a la importación abre otro selector para sus MINIGSF o un ZIP; **No** carga la
 biblioteca sin playlist. También existe Profile > Import GSF Playlist. Los
 nombres originales se conservan en directorios privados separados por URI;
 las copias y el análisis de las playlists se ejecutan fuera del hilo de interfaz.
+Desde 1.0.8, **Menú > Abrir carpeta GSF…** permite seleccionar directamente la
+carpeta de un OST: detecta su biblioteca e importa sus MINIGSF automáticamente,
+sin abrir primero el GSFLIB. Usa el permiso SAF del árbol y enumera sólo los hijos
+directos. Si hay varias bibliotecas pide elegir una; no mezcla sus asociaciones.
 Un ZIP con el conjunto completo sigue siendo compatible. No se enumeran vecinos
-de un documento SAF aislado ni se piden permisos generales de almacenamiento.
+de un documento SAF aislado; la enumeración sólo se hace con una carpeta SAF
+seleccionada explícitamente. No se piden permisos generales de almacenamiento.
 Consulta [GSFLIB y MINIGSF](GSF-ANDROID.md) para la causa del error de pistas cero,
 las asociaciones `_lib`, las pruebas y los límites del formato soportado.
 
