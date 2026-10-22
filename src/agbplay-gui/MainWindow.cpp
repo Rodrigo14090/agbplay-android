@@ -104,6 +104,10 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
 
 MainWindow::~MainWindow()
 {
+    // Release gesture registrations while their widget targets still exist.
+    for (auto *widget : findChildren<QWidget *>())
+        if (QScroller::hasScroller(widget))
+            QScroller::ungrabGesture(widget);
     playbackEngine.reset();
     if (exportThread && exportThread->joinable())
         exportThread->join();

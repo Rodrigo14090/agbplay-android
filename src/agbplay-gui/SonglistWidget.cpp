@@ -118,6 +118,8 @@ void SonglistWidget::EnableTouchInterface()
 
 SonglistWidget::~SonglistWidget()
 {
+    if (QScroller::hasScroller(listWidget.viewport()))
+        QScroller::ungrabGesture(listWidget.viewport());
 }
 
 void SonglistWidget::Clear()
