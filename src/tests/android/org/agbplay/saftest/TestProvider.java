@@ -15,6 +15,7 @@ public final class TestProvider extends ContentProvider {
     public static final byte[] DATA = new byte[150003];
     public static String lastUri;
     public static boolean fail;
+    public static boolean denyTreeMetadata;
     public static String name = "Pokémon #1 %.GBA";
     static { for (int i = 0; i < DATA.length; ++i) DATA[i] = (byte)(i * 31); }
     public boolean onCreate() { return true; }
@@ -39,6 +40,7 @@ public final class TestProvider extends ContentProvider {
                 children.addRow(new Object[]{"subfolder", "other.gsflib", DocumentsContract.Document.MIME_TYPE_DIR});
                 return children;
             }
+            if (denyTreeMetadata) throw new SecurityException("Tree metadata unavailable");
             String id = DocumentsContract.getDocumentId(uri);
             MatrixCursor metadata = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
             metadata.addRow(new Object[]{id.equals("opaque:lib# %") ? "Pokémon.GSFLIB" :

@@ -74,6 +74,10 @@ actual; una playlist malformada no lo descarta. El rango de IDs se verifica adem
 contra el perfil final antes de inicializar la reproducción. La playlist de la
 carpeta sustituye la lista en memoria sin otro diálogo y queda disponible para
 guardar en el perfil. No se cambia el backend de audio ni los remuestreadores.
+Los nombres obtenidos de la enumeración se reutilizan al copiar, sin hacer otra
+consulta de metadatos por canción; así se conservan incluso si el proveedor permite
+enumerar pero falla al consultar un hijo. En esta modalidad `_lib` debe resolver
+a la biblioteca en la propia carpeta, no a una biblioteca homónima en otro nivel.
 
 ### Archivos y ZIP
 

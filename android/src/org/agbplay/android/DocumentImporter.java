@@ -59,6 +59,12 @@ public final class DocumentImporter {
     }
 
     public static String importDocument(Context context, String document, String directory) throws IOException {
+        return importDocumentWithName(context, document, directory, null);
+    }
+
+    /** Reuse DISPLAY_NAME from a tree query; avoid one extra provider query per song. */
+    public static String importDocumentWithName(Context context, String document, String directory,
+                                               String originalName) throws IOException {
         Uri uri = Uri.parse(document); // Preserve escaped document IDs; never rebuild the path.
         if (!"content".equals(uri.getScheme())) throw new IOException("Expected a content URI");
         ContentResolver resolver = context.getContentResolver();
@@ -69,7 +75,7 @@ public final class DocumentImporter {
         File documentRoot = new File(root, digest(document));
         if (!documentRoot.isDirectory() && !documentRoot.mkdirs())
             throw new IOException("Cannot create document import directory");
-        String name = displayName(resolver, uri).replace('\\', '_').replace('/', '_')
+        String name = (originalName == null ? displayName(resolver, uri) : originalName).replace('\\', '_').replace('/', '_')
                 .replaceAll("[\\p{Cntrl}]", "_");
         if (name.isEmpty() || name.equals(".") || name.equals("..") || name.length() > 180)
             name = "document" + suffix(name);

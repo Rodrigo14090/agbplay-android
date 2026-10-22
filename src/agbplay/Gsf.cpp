@@ -215,7 +215,8 @@ std::vector<Gsf::Song> Gsf::ReadPlaylist(const std::vector<std::filesystem::path
                 std::replace(song.library.begin(), song.library.end(), '\\', '/');
                 const std::filesystem::path dependency(song.library);
                 const bool memberPaths = archive && !library.is_absolute();
-                const auto resolved = memberPaths ? (filename.parent_path() / dependency).lexically_normal() : dependency.filename();
+                const auto resolved = memberPaths ? (filename.parent_path() / dependency).lexically_normal()
+                    : matchingLibraryOnly ? dependency.lexically_normal() : dependency.filename();
                 const auto expected = memberPaths ? library.lexically_normal() : library.filename();
                 if (song.library.empty() || dependency.is_absolute())
                     throw Xcept("MINIGSF '{}' has no valid relative _lib association", filename.string());

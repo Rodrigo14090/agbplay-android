@@ -951,6 +951,10 @@ void MainWindow::OpenGsfFolder(const QString &directory)
             for (size_t i = 0; i < documents.size(); ++i) {
                 if (documents[i].name.endsWith(".gsflib", Qt::CaseInsensitive) ||
                     documents[i].name.endsWith(".gsf", Qt::CaseInsensitive)) {
+                    if (names.contains(documents[i].name, Qt::CaseInsensitive)) {
+                        MBoxError("Carpeta GSF", "Several libraries have the same filename. Their MINIGSF _lib tags cannot distinguish them; use separate OST folders.");
+                        return;
+                    }
                     libraries.push_back(i);
                     names.push_back(documents[i].name);
                 }
@@ -976,12 +980,13 @@ void MainWindow::ImportGsfFolder(const std::vector<DocumentAccess::FolderDocumen
 {
     RunImport([this, documents, library](const std::function<bool()> &cancelled) {
         if (cancelled()) return std::function<void()>{};
-        const auto lib = DocumentAccess::LocalCopy(documents.at(library).uri);
+        const auto &chosen = documents.at(library);
+        const auto lib = DocumentAccess::LocalCopy(chosen.uri, chosen.name);
         std::vector<std::filesystem::path> minis;
         for (const auto &document : documents) {
             if (cancelled()) return std::function<void()>{};
             if (document.name.endsWith(".minigsf", Qt::CaseInsensitive))
-                minis.push_back(DocumentAccess::LocalCopy(document.uri));
+                minis.push_back(DocumentAccess::LocalCopy(document.uri, document.name));
         }
         // Fully parse before closing the current game; never publish a partial
         // import. Ignore only valid selectors associated with another library.

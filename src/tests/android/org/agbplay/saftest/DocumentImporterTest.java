@@ -24,6 +24,7 @@ public final class DocumentImporterTest extends InstrumentationTestCase {
         directory = new File(context.getCacheDir(), "document-test");
         directory.mkdirs();
         TestProvider.fail = false;
+        TestProvider.denyTreeMetadata = false;
         TestProvider.name = "Pokémon #1 %.GBA";
     }
     protected void tearDown() throws Exception {
@@ -120,8 +121,9 @@ public final class DocumentImporterTest extends InstrumentationTestCase {
         assertEquals("01 canción.minigsf", files[3]);
         assertEquals("opaque:lib# %", DocumentsContract.getDocumentId(Uri.parse(files[0])));
         assertEquals("mini:one/encoded%", DocumentsContract.getDocumentId(Uri.parse(files[2])));
+        TestProvider.denyTreeMetadata = true; // the list already supplied each child's real name
         for (int i = 0; i < files.length; i += 2) {
-            String imported = DocumentImporter.importDocument(context, files[i], directory.getPath());
+            String imported = DocumentImporter.importDocumentWithName(context, files[i], directory.getPath(), files[i + 1]);
             assertEquals(files[i + 1], new File(imported).getName());
             assertTrue(Arrays.equals(TestProvider.DATA, Files.readAllBytes(new File(imported).toPath())));
         }

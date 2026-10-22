@@ -66,7 +66,7 @@ std::vector<DocumentAccess::FolderDocument> DocumentAccess::ListGsfFolder(const 
 #endif
 }
 
-std::filesystem::path DocumentAccess::LocalCopy(const QString &document)
+std::filesystem::path DocumentAccess::LocalCopy(const QString &document, const QString &displayName)
 {
     const QUrl url(document);
     if (url.scheme() != "content")
@@ -76,23 +76,28 @@ std::filesystem::path DocumentAccess::LocalCopy(const QString &document)
     const QJniObject context = QNativeInterface::QAndroidApplication::context();
     const auto uri = QJniObject::fromString(document);
     const auto root = QJniObject::fromString(directory);
+    const auto name = QJniObject::fromString(displayName);
     // Use raw JNI for the call so Java's actual exception reaches the error dialog
     // instead of being cleared by QJniObject and replaced with "Unknown error".
     QJniEnvironment env;
     const auto importer = env.findClass("org/agbplay/android/DocumentImporter");
     CheckJavaException(env);
     if (!importer) throw Xcept("Android DocumentImporter class not found");
-    const auto method = env->GetStaticMethodID(importer, "importDocument",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+    const bool knownName = !displayName.isEmpty();
+    const auto method = env->GetStaticMethodID(importer, knownName ? "importDocumentWithName" : "importDocument",
+        knownName ? "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"
+                  : "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
     CheckJavaException(env);
     if (!method) throw Xcept("Android DocumentImporter method not found");
-    const auto result = env->CallStaticObjectMethod(importer, method, context.object(),
-                                                   uri.object<jstring>(), root.object<jstring>());
+    const auto result = knownName
+        ? env->CallStaticObjectMethod(importer, method, context.object(), uri.object<jstring>(), root.object<jstring>(), name.object<jstring>())
+        : env->CallStaticObjectMethod(importer, method, context.object(), uri.object<jstring>(), root.object<jstring>());
     CheckJavaException(env);
     const auto path = QJniObject::fromLocalRef(result).toString();
     if (path.isEmpty()) throw Xcept("Android document provider returned an empty import path");
     return path.toStdString();
 #else
+    (void)displayName;
     throw Xcept("Android content URIs require the Android document resolver");
 #endif
 }
