@@ -4,6 +4,7 @@
 #include <QAction>
 #include <QDir>
 #include <QMenu>
+#include <QMenuBar>
 #include <QSignalSpy>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -58,6 +59,7 @@ private slots:
     void openActionAndPlaylistStayDistinct()
     {
         MainWindow window(nullptr, true);
+        QVERIFY(!window.menuBar()->isNativeMenuBar());
         window.resize(360, 740);
         window.show();
         settle();

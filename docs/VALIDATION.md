@@ -1,5 +1,28 @@
 # Validación de la entrega
 
+## Menús Android y barra nativa (séptima entrega)
+
+El usuario confirmó que **1.0.5 sigue sin mostrar Abrir ROM/GSF ni Menú** en su
+teléfono. Se conserva ese resultado; pasar las pruebas Linux no significó que
+la desaparición estuviese corregida en Android.
+
+Qt 6.11.2 mantiene la integración nativa de QMenuBar aunque se oculte su QWidget.
+QtActivityBase.onPrepareOptionsMenu puede volver a mostrar la ActionBar cuando
+hay menús registrados. Esa barra no pertenece al árbol de widgets comprobado por
+las pruebas Linux y es una posible superposición de la primera fila.
+
+1.0.6 desactiva el menú nativo antes de construir las acciones y declara un tema
+Android DayNight sin ActionBar ni título nativo. Se conserva la apertura SAF,
+todos los menús mediante el botón Menú, los paneles y el audio de 1.0.4.
+La corrección no cambia los tamaños de filas ni los remuestreadores.
+
+Se añadió una prueba con MainWindow real, Qt Android 6.11.2, emulador API 35,
+toques ADB y capturas de la pantalla Android completa. Se ejecuta primero sobre
+la interfaz de 1.0.5 y después sobre la corrección. Los resultados y el APK se
+registrarán al finalizar CI. Localmente: escritorio compilado y 6/6 CTest;
+el probe pasó comprobación sintáctica con Clang NDK ARM64. Sigue pendiente la
+comprobación en el teléfono físico del usuario.
+
 ## Apertura visible en vista móvil (sexta entrega)
 
 [Descargar APK 1.0.5 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39778757850/artifacts/12425807404)

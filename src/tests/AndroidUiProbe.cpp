@@ -5,7 +5,10 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJniObject>
 #include <QMenu>
+#include <QMenuBar>
+#include <QCoreApplication>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTimer>
@@ -20,6 +23,16 @@ int main(int argc, char **argv)
     MainWindow window(nullptr, true);
     QObject::disconnect(&window, &MainWindow::OpenRomRequested, nullptr, nullptr);
     int openRequests = 0, menuRequests = 0;
+    bool actionBarChecked = false, actionBarPresent = false;
+    QTimer::singleShot(500, &app, [&] {
+        QNativeInterface::QAndroidApplication::runOnAndroidMainThread([] {
+            QJniObject activity = QNativeInterface::QAndroidApplication::context();
+            return QVariant(activity.callObjectMethod("getActionBar", "()Landroid/app/ActionBar;").isValid());
+        }).then(&app, [&](const QVariant &present) {
+            actionBarPresent = present.toBool();
+            actionBarChecked = true;
+        });
+    });
     QObject::connect(&window, &MainWindow::OpenRomRequested, &app, [&] { ++openRequests; });
     auto *open = window.findChild<QPushButton *>("openRomButton");
     auto *menu = window.findChild<QToolButton *>("touchMenuButton");
@@ -40,6 +53,8 @@ int main(int argc, char **argv)
                                {"width", widget->width()}, {"height", widget->height()}};
         };
         const QJsonObject state{{"qt", qVersion()}, {"open", describe(open)}, {"menu", describe(menu)},
+                                {"nativeMenuBar", window.menuBar()->isNativeMenuBar()},
+                                {"actionBarChecked", actionBarChecked}, {"actionBarPresent", actionBarPresent},
                                 {"openRequests", openRequests}, {"menuRequests", menuRequests},
                                 {"windowWidth", window.width()}, {"windowHeight", window.height()}};
         QSaveFile file(directory + "/ui-probe.json");

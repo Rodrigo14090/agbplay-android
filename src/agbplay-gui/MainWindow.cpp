@@ -44,6 +44,11 @@
 
 MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(parent)
 {
+    // Android's native menu integration can show an Activity ActionBar even
+    // after the QWidget menu bar is hidden. Keep all touch menus in Qt from
+    // the outset, before creating any platform menu handles.
+    if (touchInterface)
+        menuBar()->setNativeMenuBar(false);
     SetupMenuBar();
     SetupToolBar();
     SetupWidgets();

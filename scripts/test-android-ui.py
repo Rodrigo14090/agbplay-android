@@ -48,6 +48,9 @@ def test(name, width, height, density, font_scale):
     current = state()
     capture(name)
     assert current["qt"] == "6.11.2", current
+    wait_for(lambda s: s["actionBarChecked"])
+    assert not state()["actionBarPresent"], state()
+    assert not state()["nativeMenuBar"], state()
     for control, count in (("open", "openRequests"), ("menu", "menuRequests")):
         current = state()
         button = current[control]

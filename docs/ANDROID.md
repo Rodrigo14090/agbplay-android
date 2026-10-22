@@ -102,6 +102,13 @@ reserva la altura indicada por sus métricas, con un mínimo táctil de 48 unida
 Esto refuerza su visibilidad al iniciar en modo teléfono y al rotar; no cambia
 la acción SAF ni el audio de 1.0.4.
 
+1.0.5 no resolvió la desaparición en el teléfono del usuario. Desde 1.0.6 el modo
+táctil desactiva el menú nativo antes de crear las acciones y Android usa un
+tema sin ActionBar ni título nativo: la apertura y los menús se dibujan en Qt.
+Ocultar el QWidget QMenuBar no desactiva su integración con el menú de la Activity.
+Una barra nativa puede cubrir widgets que Qt considera visibles; por eso las
+pruebas offscreen no bastan para comprobar este caso.
+
 Las exportaciones WAV y stems se generan en el directorio privado de exportación.
 `File > Share Exported WAV` abre el selector de compartir de Android mediante
 FileProvider y un permiso de lectura temporal. La selección de una carpeta SAF
@@ -140,6 +147,17 @@ ruptura y verifica recortes por todos los ancestros, superposiciones y el destin
 real de la pulsación obtenido desde coordenadas de ventana. Se pulsa esa posición
 para verificar la señal de apertura, sin invocar un selector de escritorio.
 Las capturas son renderizados Qt Widgets en Linux; no son capturas de Android.
+
+El trabajo CI `android-touch-ui` construye además un APK de prueba x86_64 con
+Qt 6.11.2 y el MainWindow real y lo ejecuta en un emulador Android API 35. No
+carga ROMs ni abre audio. `scripts/test-android-ui.py` cambia tamaño/densidad y
+fuente, comprueba que no exista ActionBar y envía `adb shell input tap` a las
+posiciones de apertura y Menú, exigiendo las señales correspondientes. Guarda
+capturas de pantalla completas de Android y estado JSON en el artefacto
+`android-native-ui-results`. Los toques recorren Android, por lo que no saltan
+por encima de posibles ventanas nativas como las pulsaciones directas QTest.
+El APK de prueba usa el mismo identificador en un emulador aislado; no debe
+instalarse sobre una instalación personal. El APK entregable sigue siendo ARM64.
 
 Para compilar también la salida Qt en Linux: `-DAGBPLAY_QT_AUDIO=ON` (Qt >=6.8).
 La configuración de escritorio conserva PortAudio como backend predeterminado.
