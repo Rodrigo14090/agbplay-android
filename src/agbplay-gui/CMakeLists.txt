@@ -38,8 +38,8 @@ if(ANDROID)
         QT_ANDROID_APP_NAME "agbplay"
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35
-        QT_ANDROID_VERSION_CODE 7
-        QT_ANDROID_VERSION_NAME "1.0.6-android-dev")
+        QT_ANDROID_VERSION_CODE 8
+        QT_ANDROID_VERSION_NAME "1.0.7-android-dev")
 endif()
 
 target_compile_options(agbplay-gui PRIVATE -Wall -Wextra -Wconversion)
@@ -50,8 +50,9 @@ target_link_libraries(agbplay-gui PRIVATE agbplay-ui)
 
 if(BUILD_TESTING AND NOT ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    find_package(ZLIB REQUIRED)
     qt_add_executable(test-touch-ui ../tests/TestTouchUi.cpp ../tests/UiTestAudioOutput.cpp ${AGBPLAY_GUI_QRC})
-    target_link_libraries(test-touch-ui PRIVATE agbplay-ui Qt6::Test)
+    target_link_libraries(test-touch-ui PRIVATE agbplay-ui Qt6::Test ZLIB::ZLIB)
     add_test(NAME touch-ui COMMAND test-touch-ui)
     set_tests_properties(touch-ui PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

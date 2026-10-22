@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22)
+project(GsfUpstreamReference LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 23)
+find_package(ZLIB REQUIRED)
+add_subdirectory("${AGBPLAY_UPSTREAM_SOURCE}/src/agbplay" engine)
+add_executable(gsf-reference main.cpp)
+target_include_directories(gsf-reference PRIVATE "${AGBPLAY_PORT_SOURCE}/src/tests")
+target_link_libraries(gsf-reference PRIVATE agbplay ZLIB::ZLIB)
