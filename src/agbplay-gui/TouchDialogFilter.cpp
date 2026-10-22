@@ -3,6 +3,7 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QLayout>
+#include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QScroller>
@@ -16,6 +17,8 @@ bool TouchDialogFilter::eventFilter(QObject *object, QEvent *event)
         if (dialog && !qobject_cast<QFileDialog *>(dialog) && dialog->layout() &&
             !dialog->property("agbplayTouchForm").toBool()) {
             dialog->setProperty("agbplayTouchForm", true);
+            for (auto *button : dialog->findChildren<QPushButton *>())
+                button->setMinimumHeight(44);
             auto *page = new QWidget;
             page->setLayout(dialog->layout()); // QWidget transfers the old layout and its children
             auto *scroll = new QScrollArea(dialog);

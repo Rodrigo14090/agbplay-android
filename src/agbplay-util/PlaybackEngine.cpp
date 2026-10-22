@@ -332,6 +332,8 @@ void PlaybackEngine::Recover(const char *message)
 
 std::string PlaybackEngine::TakeError()
 {
+    if (auto deviceError = output->TakeError(); !deviceError.empty())
+        return deviceError;
     std::scoped_lock lock(errorMutex);
     return std::exchange(playbackError, {});
 }

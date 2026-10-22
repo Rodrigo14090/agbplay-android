@@ -52,7 +52,7 @@ std::filesystem::path DocumentAccess::LocalCopy(const QString &document)
 bool DocumentAccess::ShareFile(const QString &path)
 {
 #ifdef Q_OS_ANDROID
-    const auto context = QNativeInterface::QAndroidApplication::context();
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
     const auto authority = QJniObject::fromString("org.agbplay.android.qtprovider");
     const auto fileName = QJniObject::fromString(path);
     const QJniObject file("java/io/File", "(Ljava/lang/String;)V", fileName.object<jstring>());

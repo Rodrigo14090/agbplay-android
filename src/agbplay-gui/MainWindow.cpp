@@ -51,8 +51,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     containerStatusInfoSplitter.setOrientation(Qt::Vertical);
     infoWidget.setMaximumWidth(QWIDGETSIZE_MAX);
     logWidget.hide();
-    for (auto *button : findChildren<QPushButton *>())
+    statusWidgetScrollArea.setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    for (auto *button : findChildren<QPushButton *>()) {
+        button->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         button->setMinimumSize(44, 44);
+    }
     for (auto *list : {&songlistWidget.listWidget, &playlistWidget.listWidget}) {
         list->setStyleSheet("QListWidget::item { min-height: 44px; }");
         QScroller::grabGesture(list->viewport(), QScroller::TouchGesture);

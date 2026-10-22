@@ -6,7 +6,11 @@
 
 TrackWidget::TrackWidget(size_t trackNo, QWidget *parent) : QWidget(parent), trackNo(trackNo)
 {
+#ifdef Q_OS_ANDROID
+    setFixedHeight(96);
+#else
     setFixedHeight(36);
+#endif
 
     layout.setRowMinimumHeight(0, 4);
     layout.setRowStretch(0, 0);
@@ -149,6 +153,10 @@ TrackWidget::TrackWidget(size_t trackNo, QWidget *parent) : QWidget(parent), tra
     layout.setColumnStretch(COL_PADR, 1);
 
     connect(&keyboardWidget, &KeyboardWidget::pressedChanged, this, &TrackWidget::updateAnalyzer);
+#ifdef Q_OS_ANDROID
+    for (auto *button : {&muteButton, &soloButton, &analyzerButton})
+        button->setFixedSize(44, 44);
+#endif
 }
 
 TrackWidget::~TrackWidget()

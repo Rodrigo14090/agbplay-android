@@ -36,6 +36,7 @@ class QtAudioOutput final : public AudioOutput
         std::array<float, 8192> scratch{};
     } source;
     std::unique_ptr<QAudioSink> sink;
+    QAudio::Error reportedError = QAudio::NoError;
 #ifdef Q_OS_ANDROID
     QJniObject focus;
     QTimer focusTimer;
@@ -84,6 +85,13 @@ public:
         focus.callMethod<void>("close");
 #endif
         sink->stop();
+    }
+    std::string TakeError() override {
+        const auto error = sink->error();
+        if (error == QAudio::NoError) { reportedError = error; return {}; }
+        if (error == reportedError) return {};
+        reportedError = error;
+        return "Audio device stopped (Qt error " + std::to_string(int(error)) + "). Reopen the ROM to retry audio output.";
     }
     void Suspend(bool suspended) override {
 #ifdef Q_OS_ANDROID
