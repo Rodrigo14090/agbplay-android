@@ -8,11 +8,19 @@ build_dir=${AGBPLAY_BUILD_DIR:-"$project_root/build-android"}
 args=()
 if [[ -n ${QT_HOST_PATH:-} ]]; then args+=(-DQT_HOST_PATH="$QT_HOST_PATH"); fi
 "$QT_ANDROID_PREFIX/bin/qt-cmake" -S "$project_root" -B "$build_dir" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
+    -DCMAKE_BUILD_TYPE=Release -DQT_ANDROID_DEPLOYMENT_TYPE=Debug -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
     -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT" \
     -DAGBPLAY_FETCH_DEPENDENCIES=ON -DAGBPLAY_QT_AUDIO=ON \
     -DAGBPLAY_BUILD_CLI=OFF -DAGBPLAY_BUILD_NC=OFF -DBUILD_TESTING=OFF \
     "${args[@]}" "$@"
 cmake --build "$build_dir" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
 cmake --build "$build_dir" --target apk
-find "$build_dir" -name '*.apk' -print
+apk=$(find "$build_dir" -path '*/outputs/apk/debug/*-debug.apk' -print -quit)
+if [[ -n "$apk" ]]; then
+    mkdir -p "$build_dir/artifacts"
+    cp "$apk" "$build_dir/artifacts/agbplay-android-arm64-debug.apk"
+    echo "$build_dir/artifacts/agbplay-android-arm64-debug.apk"
+else
+    echo 'Expected signed development APK was not generated' >&2
+    exit 1
+fi

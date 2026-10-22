@@ -4,7 +4,9 @@ Código del reproductor: `f26c022d0c05439ca09856fd0c17e9ce0d163749`.
 Los commits posteriores de documentación/scripts conservan ese código.
 
 [Compilación y artefacto ARM64 en GitHub Actions](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39716747975)
-— artefacto `agbplay-android-arm64-debug`, compilado desde ese commit.
+— primera compilación completa desde ese commit. Ese empaquetado era release
+sin firma; la distribución instalable usa ahora Debug explícito y exige pasar
+la comprobación de firma antes de publicar el artefacto.
 
 ## Comprobado
 

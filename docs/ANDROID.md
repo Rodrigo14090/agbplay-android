@@ -29,9 +29,12 @@ Zlib procede del Android NDK.
 Se desactivan codecs y herramientas externas innecesarios, conservando exportación
 WAV float/PCM. No utiliza pkg-config host al compilar Android.
 
-El target `apk` de Qt genera un APK de desarrollo firmado con la clave debug
-local. Nunca subir esa clave. Para distribuir una versión estable, firmar el
-APK de release con una clave propia y conservarla fuera de Git.
+El script conserva C++ optimizado (`Release`) y fuerza
+`QT_ANDROID_DEPLOYMENT_TYPE=Debug` para generar un APK de desarrollo firmado
+con la clave debug local. El resultado está en
+`build-android/artifacts/agbplay-android-arm64-debug.apk`. Nunca subir esa clave. Para distribuir una versión estable, firmar el
+APK de release con una clave propia y conservarla fuera de Git. Las claves
+debug de runners efímeros pueden cambiar entre compilaciones.
 
 ```bash
 adb install -r path/to/agbplay-gui-debug.apk

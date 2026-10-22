@@ -45,7 +45,7 @@ jobs:
           ./scripts/build-android.sh
       - name: Verify APK ABI, ELF alignment and signature
         run: |
-          apk=$(find build-android -name '*-debug.apk' -print -quit)
+          apk=build-android/artifacts/agbplay-android-arm64-debug.apk
           test -n "$apk"
           python3 scripts/verify-apk.py "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
@@ -53,5 +53,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: agbplay-android-arm64-debug
-          path: build-android/**/*.apk
+          path: build-android/artifacts/agbplay-android-arm64-debug.apk
           if-no-files-found: error
