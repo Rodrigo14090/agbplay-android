@@ -77,7 +77,9 @@ Qt, sin detectar categorías de dispositivo:
   en tres paneles redimensionables con separadores táctiles.
 
 Rotar o cambiar el tamaño mueve los mismos widgets, conservando listas,
-selección y estado de reproducción. Las pistas muestran M/S/A de 48 unidades,
+selección y estado de reproducción. Los grupos de apertura, transporte y niveles se organizan en tres filas si su
+ancho es menor de 600; dos entre 600 y 999; una desde 1000. Las pistas muestran
+M/S/A de 48 unidades,
 datos técnicos y teclados que se ajustan al ancho, sin cambiar la síntesis.
 Las listas tienen filas de 48 unidades, casillas ampliadas y menú de acciones
 para reproducir, renombrar y subir/bajar entradas. El `+` sigue añadiendo a la
