@@ -95,6 +95,13 @@ playlist. **Menú** permite acceder a todos los menús originales, incluidos
 perfiles, exportación, preferencias y registro. Los formularios complejos tienen
 desplazamiento táctil. Escritorio conserva su interfaz predeterminada.
 
+Desde 1.0.5 la fila **Abrir ROM/GSF / Menú** permanece instalada en el layout:
+los cambios de tamaño sólo cambian las direcciones de los bloques, sin extraer
+y reinsertar esa fila. Los botones se crean directamente en su fila y se
+reserva la altura indicada por sus métricas, con un mínimo táctil de 48 unidades.
+Esto refuerza su visibilidad al iniciar en modo teléfono y al rotar; no cambia
+la acción SAF ni el audio de 1.0.4.
+
 Las exportaciones WAV y stems se generan en el directorio privado de exportación.
 `File > Share Exported WAV` abre el selector de compartir de Android mediante
 FileProvider y un permiso de lectura temporal. La selección de una carpeta SAF
@@ -127,6 +134,11 @@ AGBPLAY_BUILD_DIR="$PWD/build-ui" AGBPLAY_UI_CAPTURE_DIR="$PWD/build-ui/captures
 `touch-ui` comprueba el botón de apertura, su separación del `+`, la conservación
 de estado durante 27 cambios de tamaño, geometría de controles de 48 unidades,
 vista de pistas sin desbordamiento horizontal y mute/solo con pestañas ocultas.
+También inicia directamente en teléfono, cambia fuentes de 12 a 20 puntos y
+exige espacio para una acción de 72 unidades de alto, recorre los puntos de
+ruptura y verifica recortes por todos los ancestros, superposiciones y el destino
+real de la pulsación obtenido desde coordenadas de ventana. Se pulsa esa posición
+para verificar la señal de apertura, sin invocar un selector de escritorio.
 Las capturas son renderizados Qt Widgets en Linux; no son capturas de Android.
 
 Para compilar también la salida Qt en Linux: `-DAGBPLAY_QT_AUDIO=ON` (Qt >=6.8).

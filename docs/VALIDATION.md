@@ -1,5 +1,34 @@
 # Validación de la entrega
 
+## Apertura visible en vista móvil (sexta entrega)
+
+La captura del teléfono muestra ausente la fila completa de **Abrir ROM/GSF /
+Menú**, mientras transporte, volumen y pestañas siguen presentes. El fallo
+exacto no se ha reproducido con el estilo Qt de Linux; no se atribuye una
+causa interna confirmada al estilo Android a partir de esa captura.
+
+La corrección mantiene la fila de apertura instalada permanentemente en un
+layout de bloques. Cambiar entre una, dos y tres columnas cambia las direcciones
+de los layouts, sin eliminar/reinsertar widgets durante resizeEvent. Los botones
+de apertura/menú se crean con su padre final y las tres filas se muestran
+explícitamente. Los tamaños preferido, mínimo y dependiente del ancho tienen en
+cuenta las métricas de las filas, en vez de suponer siempre 48 unidades por fila.
+Se mantienen los puntos de ruptura, todos los menús, el selector SAF y el audio
+de 1.0.4 sin modificaciones.
+
+Verificado localmente: compilación de escritorio, pruebas del motor 5/5 y suite
+de interfaz ampliada. Se comprueban 27 transiciones existentes y 48 pulsaciones
+de apertura adicionales partiendo de ventanas 360×800, 384×854, 412×900 y
+740×360, con la pestaña ROM, fuentes de 12/20 puntos, una acción de 72 unidades
+de alto, ocultación/reaparición y ambos puntos de ruptura. Se verifica el recorte
+por cada ancestro y el widget que realmente recibe la pulsación en coordenadas
+de ventana. Las capturas son de Qt Widgets en Linux.
+
+La versión prevista es `1.0.5-android-dev`, versionCode **6**. La comprobación
+visual y de apertura en el teléfono Android real sigue pendiente; no hay un
+dispositivo físico conectado a este entorno. Los resultados y el APK de CI se
+añaden tras finalizar la construcción.
+
 ## Reserva temporal de PCM y corrección de underruns (quinta entrega)
 
 [Descargar APK 1.0.4 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126/artifacts/12424300526)

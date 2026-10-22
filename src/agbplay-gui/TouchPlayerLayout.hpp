@@ -2,7 +2,7 @@
 
 #include <array>
 #include <QSplitter>
-#include <QGridLayout>
+#include <QBoxLayout>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -42,12 +42,16 @@ public:
     explicit TouchControlRows(QWidget *parent = nullptr);
     void setRows(const std::array<QWidget *, 3> &rows);
     int heightForWidth(int width) const override;
-    QSize minimumSizeHint() const override { return {280, 48}; }
+    QSize minimumSizeHint() const override;
+    QSize sizeHint() const override;
 protected:
     void resizeEvent(QResizeEvent *event) override;
 private:
     void arrange(int columns);
-    QGridLayout grid{this};
+    // Keep the opening row permanently attached. Reflow changes directions,
+    // never removes/reinserts widgets while a native window is being resized.
+    QBoxLayout layout{QBoxLayout::TopToBottom, this};
+    QBoxLayout playback{QBoxLayout::TopToBottom};
     std::array<QWidget *, 3> rows{};
     int columns = 0;
 };

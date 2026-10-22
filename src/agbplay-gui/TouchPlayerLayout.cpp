@@ -112,9 +112,11 @@ int controlColumns(int width) { return width >= 1000 ? 3 : width >= 600 ? 2 : 1;
 
 TouchControlRows::TouchControlRows(QWidget *parent) : QWidget(parent)
 {
-    grid.setContentsMargins(0, 0, 0, 0);
-    grid.setSpacing(4);
-    grid.setSizeConstraint(QLayout::SetNoConstraint);
+    layout.setContentsMargins(0, 0, 0, 0);
+    layout.setSpacing(4);
+    layout.setSizeConstraint(QLayout::SetNoConstraint);
+    playback.setContentsMargins(0, 0, 0, 0);
+    playback.setSpacing(4);
     auto policy = QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     policy.setHeightForWidth(true);
     setSizePolicy(policy);
@@ -123,14 +125,38 @@ TouchControlRows::TouchControlRows(QWidget *parent) : QWidget(parent)
 void TouchControlRows::setRows(const std::array<QWidget *, 3> &newRows)
 {
     rows = newRows;
+    layout.addWidget(rows[0]);
+    layout.addLayout(&playback);
+    playback.addWidget(rows[1], 1);
+    playback.addWidget(rows[2], 1);
+    for (auto *row : rows)
+        row->show();
     arrange(controlColumns(width()));
 }
 
 int TouchControlRows::heightForWidth(int width) const
 {
     const int count = controlColumns(width);
-    const int rowCount = count == 3 ? 1 : count == 2 ? 2 : 3;
-    return rowCount * 48 + (rowCount - 1) * grid.spacing();
+    std::array<int, 3> heights{48, 48, 48};
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (const auto *row = rows[i])
+            heights[i] = std::max({48, row->minimumHeight(), row->minimumSizeHint().height(), row->sizeHint().height()});
+    }
+    if (count == 3)
+        return std::max({heights[0], heights[1], heights[2]});
+    if (count == 2)
+        return heights[0] + layout.spacing() + std::max(heights[1], heights[2]);
+    return heights[0] + heights[1] + heights[2] + layout.spacing() + playback.spacing();
+}
+
+QSize TouchControlRows::minimumSizeHint() const
+{
+    return {280, heightForWidth(width())};
+}
+
+QSize TouchControlRows::sizeHint() const
+{
+    return {layout.sizeHint().width(), heightForWidth(width())};
 }
 
 void TouchControlRows::resizeEvent(QResizeEvent *event)
@@ -142,19 +168,10 @@ void TouchControlRows::resizeEvent(QResizeEvent *event)
 
 void TouchControlRows::arrange(int count)
 {
-    for (auto *row : rows)
-        grid.removeWidget(row);
-    if (count == 3) {
-        for (int i = 0; i < 3; ++i)
-            grid.addWidget(rows[static_cast<size_t>(i)], 0, i);
-    } else if (count == 2) {
-        grid.addWidget(rows[0], 0, 0);
-        grid.addWidget(rows[1], 0, 1);
-        grid.addWidget(rows[2], 1, 0, 1, 2);
-    } else {
-        for (int i = 0; i < 3; ++i)
-            grid.addWidget(rows[static_cast<size_t>(i)], i, 0);
-    }
+    layout.setDirection(count == 3 ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
+    playback.setDirection(count == 1 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    layout.setStretch(0, count == 3 ? 1 : 0);
+    layout.setStretch(1, count == 3 ? 2 : 0);
     columns = count;
     updateGeometry();
 }
