@@ -1,25 +1,18 @@
-cmake_minimum_required(VERSION 3.10)
-
-set(CMAKE_CXX_STANDARD 23)
-
-include(FindPkgConfig)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(portaudio REQUIRED IMPORTED_TARGET portaudiocpp)
-
-file(GLOB_RECURSE AGBPLAY_UTIL_SOURCES "${CMAKE_CURRENT_LIST_DIR}/*.cpp")
-
-add_library(agbplay-util STATIC ${AGBPLAY_UTIL_SOURCES})
-
-target_compile_options(agbplay-util PRIVATE -Wall -Wextra -Wconversion)
+add_library(agbplay-util STATIC PlaybackEngine.cpp)
 target_include_directories(agbplay-util PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
-
-if(ENABLE_ADDRESS_SANITIZER)
-    target_compile_options(agbplay-util PRIVATE -fsanitize=address)
-    target_link_options(agbplay-util PRIVATE -fsanitize=address)
+target_link_libraries(agbplay-util PUBLIC agbplay)
+target_compile_options(agbplay-util PRIVATE -Wall -Wextra -Wconversion)
+if(AGBPLAY_QT_AUDIO)
+    if(ANDROID)
+        find_package(Qt6 6.11 REQUIRED COMPONENTS Core Multimedia)
+    else()
+        find_package(Qt6 6.8 REQUIRED COMPONENTS Core Multimedia)
+    endif()
+    target_sources(agbplay-util PRIVATE QtAudioOutput.cpp)
+    target_link_libraries(agbplay-util PRIVATE Qt6::Multimedia)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(portaudio REQUIRED IMPORTED_TARGET portaudiocpp)
+    target_sources(agbplay-util PRIVATE PortAudioOutput.cpp)
+    target_link_libraries(agbplay-util PRIVATE PkgConfig::portaudio)
 endif()
-
-target_link_libraries(agbplay-util
-    PRIVATE
-    agbplay
-    PkgConfig::portaudio
-)

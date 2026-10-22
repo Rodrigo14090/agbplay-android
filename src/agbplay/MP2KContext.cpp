@@ -26,7 +26,15 @@ MP2KContext::MP2KContext(
     masterLoudnessCalculator(LOUDNESS_LP_FREQ, sampleRate),
     maxLoops(maxLoops)
 {
-    assert(playerTableInfo.size() <= 32);
+    if (playerTableInfo.empty() || playerTableInfo.size() > 32)
+        throw Xcept("Invalid player table size: {}", playerTableInfo.size());
+    if (sampleRate < 8000 || sampleRate > 192000)
+        throw Xcept("Unsupported synthesis sample rate: {}", sampleRate);
+    if (!rom.ValidRange(songTableInfo.pos, size_t(songTableInfo.count) * 8))
+        throw Xcept("Song table extends beyond ROM");
+    for (const auto &info : playerTableInfo)
+        if (info.maxTracks == 0 || info.maxTracks > 16)
+            throw Xcept("Invalid player track count: {}", info.maxTracks);
 
     for (size_t i = 0; i < playerTableInfo.size(); i++)
         players.emplace_back(*this, playerTableInfo.at(i), static_cast<uint8_t>(i));

@@ -1,13 +1,15 @@
 #include "Resampler.hpp"
 
 #include "Debug.hpp"
+#ifdef AGBPLAY_HAVE_AVX2
 #include "ResamplerAVX2.hpp"
+#endif
 #include "Util.hpp"
 
 #include <boost/math/special_functions/sinc.hpp>
 
 const bool AVX2_SUPPORTED = []() {
-#if defined(__x86_64__) || defined(i386) || defined(__i386__) || defined(__386)
+#if defined(AGBPLAY_HAVE_AVX2) && (defined(__x86_64__) || defined(__i386__))
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2"))
         return std::getenv("AGBPLAY_NO_AVX") ? false : true;
@@ -28,20 +30,23 @@ std::unique_ptr<Resampler> Resampler::MakeResampler(ResamplerType t)
     case ResamplerType::LINEAR:
         return std::make_unique<LinearResampler>();
     case ResamplerType::SINC:
+#ifdef AGBPLAY_HAVE_AVX2
         if (AVX2_SUPPORTED)
             return std::make_unique<SincResamplerAVX2>();
-        else
-            return std::make_unique<SincResampler>();
+#endif
+        return std::make_unique<SincResampler>();
     case ResamplerType::BLEP:
+#ifdef AGBPLAY_HAVE_AVX2
         if (AVX2_SUPPORTED)
             return std::make_unique<BlepResamplerAVX2>();
-        else
-            return std::make_unique<BlepResampler>();
+#endif
+        return std::make_unique<BlepResampler>();
     case ResamplerType::BLAMP:
+#ifdef AGBPLAY_HAVE_AVX2
         if (AVX2_SUPPORTED)
             return std::make_unique<BlampResamplerAVX2>();
-        else
-            return std::make_unique<BlampResampler>();
+#endif
+        return std::make_unique<BlampResampler>();
     }
     throw std::logic_error("MakeResampler: Trying to to instantiate resampler for invalid enum value");
 }

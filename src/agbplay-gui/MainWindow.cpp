@@ -1,4 +1,7 @@
 #include "MainWindow.hpp"
+#include "DocumentAccess.hpp"
+#include <QApplication>
+#include <QScroller>
 
 #include "AboutWindow.hpp"
 #include "Debug.hpp"
@@ -39,6 +42,30 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     SetupToolBar();
     SetupWidgets();
     SetupStatusBar();
+#ifdef Q_OS_ANDROID
+    // Keep the original editor and controls, stacked for a phone in portrait.
+    containerCentralSplitter.setOrientation(Qt::Vertical);
+    containerStatusInfoSplitter.setOrientation(Qt::Vertical);
+    infoWidget.setMaximumWidth(QWIDGETSIZE_MAX);
+    logWidget.hide();
+    for (auto *button : findChildren<QPushButton *>())
+        button->setMinimumSize(44, 44);
+    for (auto *list : {&songlistWidget.listWidget, &playlistWidget.listWidget}) {
+        list->setStyleSheet("QListWidget::item { min-height: 44px; }");
+        QScroller::grabGesture(list->viewport(), QScroller::TouchGesture);
+    }
+    QScroller::grabGesture(statusWidgetScrollArea.viewport(), QScroller::TouchGesture);
+    connect(&songlistWidget.listWidget, &QAbstractItemView::clicked, this,
+            [this](const QModelIndex &index) { SonglistSwitchSong(index.row()); });
+    connect(&playlistWidget.listWidget, &QAbstractItemView::clicked, this,
+            [this](const QModelIndex &index) { PlaylistSwitchSong(index.row()); });
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (playbackEngine)
+            playbackEngine->SuspendOutput(state != Qt::ApplicationActive);
+        if (state != Qt::ApplicationActive && settings && settings->dirty)
+            settings->Save();
+    });
+#endif
 
     pm = std::make_unique<ProfileManager>();
     pm->LoadProfiles();
@@ -86,6 +113,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
 MainWindow::~MainWindow()
 {
+    playbackEngine.reset();
+    if (exportThread && exportThread->joinable())
+        exportThread->join();
     Debug::set_callback(nullptr, nullptr);
 }
 
@@ -587,7 +617,7 @@ void MainWindow::ProfileImportGsfPlaylist(const std::filesystem::path &gameFileP
         if (!fileDialog.exec())
             return;
         for (int i = 0; i < fileDialog.selectedFiles().size(); i++)
-            pathsToLoad.emplace_back(fileDialog.selectedFiles().at(i).toStdWString());
+            pathsToLoad.emplace_back(DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(i)));
     } else {
         if (FileReader::cmpPathExt(gameFilePath, "gsflib")) {
             /* Main file loaded from raw file -> load minigsfs from same folder */
@@ -722,7 +752,13 @@ void MainWindow::LoadGame()
         return;
 
     assert(fileDialog.selectedFiles().size() == 1);
-    const std::filesystem::path selectedFile = fileDialog.selectedFiles().at(0).toStdWString();
+    std::filesystem::path selectedFile;
+    try {
+        selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(0));
+    } catch (const std::exception &e) {
+        MBoxError("Open document", e.what());
+        return;
+    }
 
     std::vector<std::shared_ptr<Profile>> profileCandidates;
 
@@ -796,7 +832,13 @@ void MainWindow::LoadGame()
 
     UpdateSoundMode();
 
-    playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile);
+    try {
+        playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile);
+    } catch (const std::exception &e) {
+        MBoxError("Audio initialization", e.what());
+        CloseGame();
+        return;
+    }
     visualizerState = std::make_unique<MP2KVisualizerState>();
 
     playbackEngine->SetOutputNumBuffers(settings->playbackOutputNumBuffers);
@@ -980,7 +1022,13 @@ void MainWindow::SaveLog()
 
     assert(fileDialog.selectedFiles().size() == 1);
 
-    const std::filesystem::path selectedFile = fileDialog.selectedFiles().at(0).toStdWString();
+    std::filesystem::path selectedFile;
+    try {
+        selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(0));
+    } catch (const std::exception &e) {
+        MBoxError("Open document", e.what());
+        return;
+    }
     std::ofstream fileStream(selectedFile);
     if (!fileStream.is_open()) {
         MBoxError("Save log file failed", fmt::format("Failed to save file: {}", strerror(errno)));
@@ -1104,6 +1152,19 @@ void MainWindow::UpdateMute(size_t trackNo, bool audible, bool visualOnly)
 
 void MainWindow::StatusUpdate()
 {
+    if (playbackEngine) {
+        const auto error = playbackEngine->TakeError();
+        if (!error.empty()) {
+            playing = false;
+            playButton.setChecked(false);
+            pauseButton.setChecked(false);
+            stopButton.setChecked(true);
+            songlistWidget.SetPlayState(false);
+            playlistWidget.SetPlayState(false);
+            statusBar()->showMessage(QString::fromStdString("Song stopped: " + error));
+        }
+    }
+
     if (!playbackEngine || !visualizerState)
         return;
 

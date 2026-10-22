@@ -56,6 +56,21 @@ const std::filesystem::path OS::GetGlobalConfigDirectory()
     return retval;
 }
 
+#elif defined(__ANDROID__)
+#include <QStandardPaths>
+void OS::LowerThreadPriority() {} // Android manages scheduling for app threads.
+const std::filesystem::path OS::GetMusicDirectory()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toStdString() + "/exports";
+}
+const std::filesystem::path OS::GetLocalConfigDirectory()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString();
+}
+const std::filesystem::path OS::GetGlobalConfigDirectory()
+{
+    return GetLocalConfigDirectory();
+}
 #elif __has_include(<unistd.h>)
 // if we compile for a UNIX'oid
 

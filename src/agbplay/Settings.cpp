@@ -7,8 +7,8 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-static const std::filesystem::path CONFIG_PATH = OS::GetLocalConfigDirectory() / "agbplay" / "config.json";
-static const std::filesystem::path DEFAULT_EXPORT_DIRECTORY = OS::GetMusicDirectory() / "agbplay";
+static std::filesystem::path ConfigPath() { return OS::GetLocalConfigDirectory() / "agbplay" / "config.json"; }
+static std::filesystem::path DefaultExportDirectory() { return OS::GetMusicDirectory() / "agbplay"; }
 static const uint32_t DEFAULT_VOLUME = 100;
 static const uint32_t DEFAULT_SAMPLERATE = 48000;
 static const int8_t DEFAULT_MAX_LOOPS = 1;
@@ -21,7 +21,7 @@ void Settings::Load()
 {
     using nlohmann::json;
 
-    std::ifstream fileStream(CONFIG_PATH);
+    std::ifstream fileStream(ConfigPath());
     if (!fileStream.is_open()) {
         /* Not sure if errno checking is portable. */
         if (errno == ENOENT) {
@@ -32,12 +32,12 @@ void Settings::Load()
             playbackLoopIndefinitely = DEFAULT_LOOP_INDEFINITELY;
             exportSampleRate = DEFAULT_SAMPLERATE;
             exportBitDepth = DEFAULT_BIT_DEPTH;
-            exportQuickExportDirectory = DEFAULT_EXPORT_DIRECTORY;
+            exportQuickExportDirectory = DefaultExportDirectory();
             exportQuickExportAsk = DEFAULT_QUICK_EXPORT_ASK;
             return;
         }
         const std::string err = strerror(errno);
-        throw Xcept("Failed to open file: {}, {}", CONFIG_PATH.string(), err);
+        throw Xcept("Failed to open file: {}, {}", ConfigPath().string(), err);
     }
 
     json j = json::parse(fileStream);
@@ -108,7 +108,7 @@ void Settings::Load()
         const std::string tmp = j["exportQuickExportDirectory"];
         exportQuickExportDirectory = std::u8string(reinterpret_cast<const char8_t *>(tmp.c_str()));
     } else {
-        exportQuickExportDirectory = DEFAULT_EXPORT_DIRECTORY;
+        exportQuickExportDirectory = DefaultExportDirectory();
     }
 
     if (j.contains("exportQuickExportAsk") && j["exportQuickExportAsk"].is_boolean()) {
@@ -147,10 +147,10 @@ void Settings::Save()
     j["exportQuickExportAsk"] = exportQuickExportAsk;
     j["lastOpenFileDirectory"] = lastOpenFileDirectory;
 
-    std::ofstream fileStream(CONFIG_PATH);
+    std::ofstream fileStream(ConfigPath());
     if (!fileStream.is_open()) {
         const std::string err = strerror(errno);
-        throw Xcept("Failed to save file: {}, {}", CONFIG_PATH.string(), err);
+        throw Xcept("Failed to save file: {}, {}", ConfigPath().string(), err);
     }
     fileStream << std::setw(2) << j << std::endl;
     fileStream.close();

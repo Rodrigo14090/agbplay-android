@@ -9,6 +9,7 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <thread>
 #include <QListView>
 #include <QMainWindow>
 #include <QProgressBar>
@@ -23,10 +24,7 @@ class PlaybackEngine;
 class ProfileManager;
 struct Settings;
 struct Profile;
-namespace std
-{
-    class thread;
-}
+
 struct MP2KVisualizerState;
 
 class MainWindow : public QMainWindow

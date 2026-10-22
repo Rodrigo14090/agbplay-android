@@ -1,59 +1,11 @@
+#include "PlaybackEngine.hpp"
+#include "Debug.hpp"
+#include "Xcept.hpp"
 #include <algorithm>
-#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <thread>
-
-#if __has_include(<pa_win_wasapi.h>)
-#include <pa_win_wasapi.h>
-#endif
-#if __has_include(<pa_jack.h>)
-#include <pa_jack.h>
-#endif
-
-#include "Debug.hpp"
-#include "PlaybackEngine.hpp"
-#include "Util.hpp"
-#include "Xcept.hpp"
-
-/*
- * set JACK client name
- */
-
-/* use a global object to run the function before Pa_Initialize() */
-
-#if __has_include(<pa_jack.h>)
-struct JackNameSetter
-{
-    JackNameSetter() { PaJack_SetClientName("agbplay"); }
-} jackNameSetter;
-#endif
-
-/*
- * PlaybackEngine data
- */
-
-// first portaudio hostapi has highest priority, last hostapi has lowest
-// if none are available, the default one is selected.
-// they are also the ones which are known to work
-const std::vector<PaHostApiTypeId> PlaybackEngine::hostApiPriority = {
-    // Unix
-    paALSA,
-    paJACK,
-    // Windows
-    paWASAPI,
-    paMME,
-    // Mac OS
-    paCoreAudio,
-    paSoundManager,
-};
-
-/*
- * public PlaybackEngine
- */
+#include <utility>
 
 PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile)
     : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), profile(profile)
@@ -67,10 +19,13 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
         profile.songTableInfoPlayback,
         profile.playerTablePlayback
     );
-    ctx->m4aSongNumStart(0);
-    ctx->m4aSongNumStop(0);
-    portaudioOpen();
-    playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
+    output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio);
+    try {
+        playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
+    } catch (...) {
+        output.reset();
+        throw;
+    }
 #ifdef __linux__
     pthread_setname_np(playerThread->native_handle(), "mixer thread");
 #endif
@@ -78,20 +33,20 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
 
 PlaybackEngine::~PlaybackEngine()
 {
+    output.reset(); // joins/stops the device callback before queue/context destruction
     // stop and deallocate player thread if required
     if (playerThread) {
         playerThreadQuitRequest = true;
+        playerInvokeReady.notify_all();
         playerThread->join();
     }
 
-    portaudioClose();
 }
 
 void PlaybackEngine::LoadSong(uint16_t songIdx)
 {
-    trackMuted.reset();
-
     auto func = [this, songIdx]() {
+        trackMuted.reset();
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -128,7 +83,8 @@ void PlaybackEngine::Play()
 
 bool PlaybackEngine::Pause()
 {
-    auto func = [this]() {
+    bool playingAgain = false;
+    auto func = [this, &playingAgain]() {
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -144,13 +100,13 @@ bool PlaybackEngine::Pause()
             songEnded = false;
             paused = false;
         }
-        // paused = !paused;
+        playingAgain = !paused;
     };
 
     InvokeAsPlayer(func);
 
     /* Return true if the player was paused an is now playing again. False otherwise. */
-    return !paused;
+    return playingAgain;
 }
 
 void PlaybackEngine::Stop()
@@ -172,11 +128,8 @@ void PlaybackEngine::Stop()
 
 void PlaybackEngine::SpeedDouble()
 {
-    speedFactor <<= 1;
-    if (speedFactor > 1024)
-        speedFactor = 1024;
-
     auto func = [this]() {
+        speedFactor = std::min<uint32_t>(speedFactor * 2, 1024);
         // TODO replace this with m4aMPlayTempoControl
         ctx->reader.SetSpeedFactor(float(speedFactor) / 64.0f);
     };
@@ -186,11 +139,8 @@ void PlaybackEngine::SpeedDouble()
 
 void PlaybackEngine::SpeedHalve()
 {
-    speedFactor >>= 1;
-    if (speedFactor < 1)
-        speedFactor = 1;
-
     auto func = [this]() {
+        speedFactor = std::max<uint32_t>(speedFactor / 2, 1);
         // TODO replace this with m4aMPlayTempoControl
         ctx->reader.SetSpeedFactor(float(speedFactor) / 64.0f);
     };
@@ -208,9 +158,8 @@ void PlaybackEngine::ToggleMute(size_t index)
     if (index >= trackMuted.size())
         return;
 
-    trackMuted[index] = !trackMuted[index];
-
     auto func = [this, index]() {
+        trackMuted[index] = !trackMuted[index];
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -229,9 +178,8 @@ void PlaybackEngine::Mute(size_t index, bool mute)
     if (index >= trackMuted.size())
         return;
 
-    trackMuted[index] = mute;
-
     auto func = [this, index, mute]() {
+        trackMuted[index] = mute;
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -270,12 +218,14 @@ void PlaybackEngine::UpdateSoundMode()
      * the profile in the profile editor. No reloading is required and changes should
      * apply immediately. */
 
-    auto func = [this]() {
-        ctx->agbplaySoundMode = profile.agbplaySoundMode;
-        ctx->m4aSoundModeReverb(profile.mp2kSoundModePlayback.rev);
-        ctx->m4aSoundModePCMVol(profile.mp2kSoundModePlayback.vol);
-        ctx->m4aSoundModePCMFreq(profile.mp2kSoundModePlayback.freq);
-        ctx->m4aSoundModeDacConfig(profile.mp2kSoundModePlayback.dacConfig);
+    const auto newAgbMode = profile.agbplaySoundMode;
+    const auto newMode = profile.mp2kSoundModePlayback;
+    auto func = [this, newAgbMode, newMode]() {
+        ctx->agbplaySoundMode = newAgbMode;
+        ctx->m4aSoundModeReverb(newMode.rev);
+        ctx->m4aSoundModePCMVol(newMode.vol);
+        ctx->m4aSoundModePCMFreq(newMode.freq);
+        ctx->m4aSoundModeDacConfig(newMode.dacConfig);
         /* Do not update the playertable since it may cause playback issues.
          * The user is supposed to reload the game if that was changed with the
          * profile editor. */
@@ -294,7 +244,7 @@ void PlaybackEngine::GetVisualizerState(MP2KVisualizerState &visualizerState)
 }
 
 void PlaybackEngine::SetOutputNumBuffers(size_t numBuffers) {
-    ringbuffer.SetNumBuffers(numBuffers);
+    outputNumBuffers.store(std::clamp<size_t>(numBuffers, 1, 16));
 }
 
 void PlaybackEngine::SetMaxLoops(int8_t maxLoops) {
@@ -316,42 +266,80 @@ void PlaybackEngine::SetPlaybackVolume(float volume)
 
 void PlaybackEngine::threadWorker()
 {
+    using namespace std::chrono_literals;
     try {
         std::vector<sample> silenceBuffer(ctx->mixer.GetSamplesPerBuffer());
-
         while (!playerThreadQuitRequest) {
-            /* Run events from main thread. */
             InvokeRun();
-
-            if (paused) {
-                /* Silence output buffer. */
-                ringbuffer.Put(silenceBuffer);
-            } else {
-                /* Run sound engine. */
-                ctx->m4aSoundMain();
-                updateVisualizerState();
-
-                /* Write audio data to portaudio ringbuffer. */
-                assert(ctx->masterAudioBuffer.size() == ctx->mixer.GetSamplesPerBuffer());
-                ringbuffer.Put(ctx->masterAudioBuffer);
+            if (playerThreadQuitRequest)
+                break;
+            const auto target = std::min(AudioFrameQueue::Capacity / 2,
+                                         outputNumBuffers.load() * callbackFrames.load());
+            if (suspended.load() || queue.Queued() > target) {
+                std::unique_lock lock(playerInvokeMutex);
+                playerInvokeReady.wait_for(lock, 1ms, [this] {
+                    return playerInvokePending || playerThreadQuitRequest;
+                });
+                continue;
             }
-
-            /* Stop all players after loop fadeout (or end). */
-            if (ctx->SongEnded() && !songEnded) {
-                ctx->m4aMPlayAllStop();
-                ctx->m4aSoundClear();
-                songEnded = true;
+            try {
+                if (paused) {
+                    queue.Put(silenceBuffer);
+                } else {
+                    ctx->m4aSoundMain();
+                    updateVisualizerState();
+                    if (!queue.Put(ctx->masterAudioBuffer))
+                        throw Xcept("Synthesis frame exceeds audio queue capacity");
+                }
+                if (ctx->SongEnded() && !songEnded) {
+                    ctx->m4aMPlayAllStop();
+                    ctx->m4aSoundClear();
+                    songEnded = true;
+                }
+            } catch (const std::exception &e) {
+                // Bad ROM data must not terminate the worker or strand UI commands.
+                Recover(e.what());
             }
         }
-
-        playerThreadQuitError.clear();
-    } catch (std::exception &e) {
-        Debug::print("player thread has crashed: {}", e.what());
+    } catch (const std::exception &e) {
+        std::scoped_lock lock(playerInvokeMutex);
         playerThreadQuitError = e.what();
     }
+    {
+        std::scoped_lock lock(playerInvokeMutex);
+        playerThreadQuitComplete = true;
+    }
+    playerInvokeComplete.notify_all();
+}
 
-    std::unique_lock l(playerInvokeMutex);
-    playerThreadQuitComplete = true;
+void PlaybackEngine::Recover(const char *message)
+{
+    Debug::print("Song stopped: {}", message);
+    // Stop channels before track state is reused; retain the mixer/reverb settings.
+    ctx->m4aMPlayAllStop();
+    ctx->m4aSoundClear();
+    for (auto &player : ctx->players)
+        player.Init(ctx->rom, 0);
+    paused = true;
+    songEnded = false; // do not automatically advance through broken table entries
+    {
+        std::scoped_lock lock(errorMutex);
+        playbackError = message;
+    }
+    updateVisualizerState();
+}
+
+std::string PlaybackEngine::TakeError()
+{
+    std::scoped_lock lock(errorMutex);
+    return std::exchange(playbackError, {});
+}
+
+void PlaybackEngine::SuspendOutput(bool suspend)
+{
+    suspended.store(suspend);
+    output->Suspend(suspend);
+    playerInvokeReady.notify_one();
 }
 
 void PlaybackEngine::updateVisualizerState()
@@ -369,173 +357,45 @@ void PlaybackEngine::updateVisualizerState()
 
 void PlaybackEngine::InvokeAsPlayer(const std::function<void(void)> &func)
 {
-    /* This function must be called from within the main thread only! */
+    // UI thread only. Execute commands on the synthesis worker; predicate waits
+    // handle spurious wakeups and worker termination.
     assert(std::this_thread::get_id() != playerThread->get_id());
-
-    std::unique_lock l(playerInvokeMutex);
-
+    std::unique_lock lock(playerInvokeMutex);
+    if (playerThreadQuitComplete)
+        throw Xcept("Playback thread stopped: {}", playerThreadQuitError);
+    playerCommand = func;
     playerInvokePending = true;
-    playerInvokeReady.wait(l);
-    func();
-    playerInvokePending = false;
-    playerInvokeComplete.notify_one();
+    playerInvokeReady.notify_one();
+    playerInvokeComplete.wait(lock, [this] { return !playerInvokePending || playerThreadQuitComplete; });
+    if (playerThreadQuitComplete)
+        throw Xcept("Playback thread stopped: {}", playerThreadQuitError);
 }
 
 void PlaybackEngine::InvokeRun()
 {
-    /* This function must be called from within the player thread only! */
-    // This does not work as playerThread is not fully initialized eventhough this thread is already running
-    // assert(std::this_thread::get_id() == playerThread->get_id());
-
+    std::unique_lock lock(playerInvokeMutex);
     if (!playerInvokePending)
         return;
-
-    std::unique_lock l(playerInvokeMutex);
-
-    if (playerThreadQuitComplete) [[unlikely]] {
-        /* if the player thread has exited already, we can't invoke
-         * a function as we'll wait forever for the thread to become ready. */
-        if (playerThreadQuitError.size() > 0)
-            throw Xcept("Playback thread has crashed: {}", playerThreadQuitError);
-        throw Xcept("Unable to send request to playback thread, which is not running.");
-    }
-
-    playerInvokeReady.notify_one();
-
-    /* wait for remote invocation to complete... */
-    playerInvokeComplete.wait(l);
-}
-
-int PlaybackEngine::audioCallback(
-    const void *inputBuffer,
-    void *outputBuffer,
-    unsigned long framesPerBuffer,
-    const PaStreamCallbackTimeInfo *timeInfo,
-    PaStreamCallbackFlags statusFlags,
-    void *userData
-)
-{
-    (void)inputBuffer;
-    (void)timeInfo;
-    (void)statusFlags;
-    PlaybackEngine *_this = static_cast<PlaybackEngine *>(userData);
-
-    std::span<sample> outputBufferSpan{static_cast<sample *>(outputBuffer), framesPerBuffer};
-
-    _this->ringbuffer.Take(outputBufferSpan);
-
-    const float volTarget = _this->playerThreadVolumeTarget;
-
-    for (size_t i = 0; i < framesPerBuffer; i++) {
-        outputBufferSpan[i].left *= _this->playerThreadVolumeCur;
-        outputBufferSpan[i].right *= _this->playerThreadVolumeCur;
-
-        _this->playerThreadVolumeCur += _this->volumeRampCoeff * (volTarget - _this->playerThreadVolumeCur);
-    }
-
-    return paContinue;
-}
-
-void PlaybackEngine::portaudioOpen()
-{
-    auto &sys = portaudio::System::instance();
-
-    // init host api
-    std::vector<PaHostApiTypeId> hostApiPrioritiesWithFallback = hostApiPriority;
-    const auto &defaultHostApi = sys.defaultHostApi();
-    const auto f =
-        std::find(hostApiPrioritiesWithFallback.begin(), hostApiPrioritiesWithFallback.end(), defaultHostApi.typeId());
-    if (f == hostApiPrioritiesWithFallback.end())
-        hostApiPrioritiesWithFallback.push_back(defaultHostApi.typeId());
-
-    bool streamOpen = false;
-
-    /* Loop over all wanted host APIs in the prioritized order and use the first one,
-     * which can successfully open a stream with the default device. */
-    for (const auto apiType : hostApiPrioritiesWithFallback) {
-        const PaHostApiIndex hostApiIndex = Pa_HostApiTypeIdToHostApiIndex(apiType);
-        if (hostApiIndex < 0)
-            continue;
-
-        const auto &currentHostApi = sys.hostApiByIndex(hostApiIndex);
-
-        std::shared_ptr<void> hostApiSpecificStreamInfo;
-
-#if __has_include(<pa_win_wasapi.h>)
-        if (apiType == paWASAPI) {
-            PaWasapiStreamInfo info;
-            memset(&info, 0, sizeof(info));
-            info.size = sizeof(info);
-            info.hostApiType = paWASAPI;
-            info.version = 1;
-            info.flags = paWinWasapiAutoConvert;
-            hostApiSpecificStreamInfo = std::make_shared<PaWasapiStreamInfo>(info);
-        }
-#endif
-
-        auto &outputDevice = currentHostApi.defaultOutputDevice();
-
-        // Manually set the latency for ALSA on Linux
-        // See: https://github.com/ipatix/agbplay/issues/93
-        // PortAudio will unfortunately suggest a latency value, which
-        // is a very odd number (e.g. 8.7ms on developer machine).
-        // PipeWire takes those latency values very literally.
-        // With 48 kHz samplerate this causes a period size of 104 samples,
-        // and that causes unstable output. Round this up to the closest power of two instead.
-        double latency = outputDevice.defaultLowOutputLatency();
-        if (apiType == paALSA) {
-            long framesPerPeriodSigned = lround(latency * static_cast<double>(ctx->sampleRate));
-            assert(framesPerPeriodSigned >= 0);
-            const unsigned long framesPerPeriod = std::bit_ceil(static_cast<unsigned long>(framesPerPeriodSigned));
-            if (framesPerPeriod > 0)
-                latency = static_cast<double>(framesPerPeriod) / static_cast<double>(ctx->sampleRate);
-        }
-
-        portaudio::DirectionSpecificStreamParameters outPars(
-            outputDevice,
-            2,    // stereo
-            portaudio::SampleDataFormat::FLOAT32,
-            true,
-            latency,
-            hostApiSpecificStreamInfo.get()
-        );
-
-        portaudio::StreamParameters pars(
-            portaudio::DirectionSpecificStreamParameters::null(),
-            outPars,
-            ctx->sampleRate,
-            paFramesPerBufferUnspecified,
-            paNoFlag
-        );
-
-        try {
-            audioStream.open(pars, audioCallback, static_cast<void *>(this));
-
-            audioStream.start();
-        } catch (portaudio::Exception &e) {
-            Debug::print(
-                "unable to open/start stream on device <{}> with Host API <{}>: {}",
-                outputDevice.name(),
-                currentHostApi.name(),
-                e.what()
-            );
-            continue;
-        }
-
-        streamOpen = true;
-        break;
-    }
-
-    if (!streamOpen)
-        throw Xcept("Unable to initialize sound output: Host API could not be initialized");
-}
-
-void PlaybackEngine::portaudioClose()
-{
     try {
-        audioStream.stop();
-        audioStream.close();
-    } catch (portaudio::Exception &e) {
-        Debug::print("Error while stopping/closing portaudio stream: {}", e.what());
+        playerCommand();
+    } catch (const std::exception &e) {
+        Recover(e.what());
+    }
+    playerCommand = {};
+    playerInvokePending = false;
+    lock.unlock();
+    playerInvokeComplete.notify_one();
+}
+
+void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
+{
+    auto &self = *static_cast<PlaybackEngine *>(user);
+    self.callbackFrames.store(std::max<size_t>(1, output.size() / 2), std::memory_order_relaxed);
+    self.queue.Take(output);
+    const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
+    for (size_t i = 0; i + 1 < output.size(); i += 2) {
+        output[i] *= self.playerThreadVolumeCur;
+        output[i + 1] *= self.playerThreadVolumeCur;
+        self.playerThreadVolumeCur += self.volumeRampCoeff * (target - self.playerThreadVolumeCur);
     }
 }

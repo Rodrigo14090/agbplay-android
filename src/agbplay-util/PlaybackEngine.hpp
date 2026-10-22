@@ -1,6 +1,7 @@
 #pragma once
 
-#include "LowLatencyRingbuffer.hpp"
+#include "AudioOutput.hpp"
+#include "AudioFrameQueue.hpp"
 #include "MP2KContext.hpp"
 #include "Profile.hpp"
 
@@ -11,7 +12,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <portaudiocpp/PortAudioCpp.hxx>
+
 #include <thread>
 #include <vector>
 
@@ -38,27 +39,17 @@ public:
     void SetOutputNumBuffers(size_t numBuffers);
     void SetMaxLoops(int8_t maxLoops);
     void SetPlaybackVolume(float volume);
+    void SuspendOutput(bool suspend);
+    std::string TakeError();
 
 private:
     void threadWorker();
     void updateVisualizerState();
     void InvokeAsPlayer(const std::function<void(void)> &func);
     void InvokeRun();
-    static int audioCallback(
-        const void *inputBuffer,
-        void *outputBuffer,
-        unsigned long framesPerBuffer,
-        const PaStreamCallbackTimeInfo *timeInfo,
-        PaStreamCallbackFlags statusFlags,
-        void *userData
-    );
-
-    void portaudioOpen();
-    void portaudioClose();
-
-    static const std::vector<PaHostApiTypeId> hostApiPriority;
-
-    portaudio::FunCallbackStream audioStream;
+    static void RenderAudio(void *user, std::span<float> output) noexcept;
+    void Recover(const char *message);
+    std::unique_ptr<AudioOutput> output;
     uint32_t speedFactor = 64;
     std::bitset<16> trackMuted;    // TODO replace 16 with constant
     bool paused = false;
@@ -82,7 +73,13 @@ private:
 
     std::atomic<bool> songEnded = false;
 
-    LowLatencyRingbuffer ringbuffer;
+    AudioFrameQueue queue;
+    std::atomic<size_t> outputNumBuffers{2};
+    std::atomic<size_t> callbackFrames{512};
+    std::atomic<bool> suspended{false};
+    std::function<void()> playerCommand;
+    std::mutex errorMutex;
+    std::string playbackError;
 
     const Profile &profile;
     uint16_t songIdx = 0;

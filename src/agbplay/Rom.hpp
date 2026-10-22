@@ -29,40 +29,30 @@ public:
     static void CreateInstance(const std::filesystem::path &filePath);
     static Rom &Instance() { return *globalInstance; }
 
-    const uint8_t &operator[](size_t pos) const { return romData[pos]; }
+    const uint8_t &operator[](size_t pos) const { CheckRange(pos, 1); return romData[pos]; }
 
     int8_t ReadS8(size_t pos) const { return static_cast<int8_t>(ReadU8(pos)); }
 
     uint8_t ReadU8(size_t pos) const
     {
-        /* span::at is only available in C++26, we're currently on C++20... */
-        if (pos >= romData.size()) [[unlikely]]
-            throw Xcept("ERROR: Cannot read beyond end of ROM (size={:#x}): {:#x}", romData.size(), pos);
+        CheckRange(pos, 1);
         return romData[pos];
     }
 
     int16_t ReadS16(size_t pos) const { return static_cast<int16_t>(ReadU16(pos)); }
-
     uint16_t ReadU16(size_t pos) const
     {
-        uint32_t retval = ReadU8(pos + 1);
-        retval <<= 8;
-        retval |= romData[pos];
-        return static_cast<uint16_t>(retval);
+        CheckRange(pos, 2);
+        return static_cast<uint16_t>(uint16_t(romData[pos]) | (uint16_t(romData[pos + 1]) << 8));
     }
 
     int32_t ReadS32(size_t pos) const { return static_cast<int32_t>(ReadU32(pos)); }
 
     uint32_t ReadU32(size_t pos) const
     {
-        uint32_t retval = ReadU8(pos + 3);
-        retval <<= 8;
-        retval |= romData[pos + 2];
-        retval <<= 8;
-        retval |= romData[pos + 1];
-        retval <<= 8;
-        retval |= romData[pos + 0];
-        return retval;
+        CheckRange(pos, 4);
+        return uint32_t(romData[pos]) | (uint32_t(romData[pos + 1]) << 8) |
+               (uint32_t(romData[pos + 2]) << 16) | (uint32_t(romData[pos + 3]) << 24);
     }
 
     size_t ReadAgbPtrToPos(size_t pos) const
@@ -73,24 +63,15 @@ public:
         return ptr - AGB_MAP_ROM;
     }
 
-    const void *GetPtr(size_t pos) const { return &romData[pos]; }
-
+    const void *GetPtr(size_t pos) const { CheckRange(pos, 0); return romData.data() + pos; }
     size_t Size() const { return romData.size(); }
-
     bool ValidPointer(uint32_t ptr) const
     {
-        if (ptr - AGB_MAP_ROM >= romData.size())
-            return false;
-        if (ptr - AGB_MAP_ROM + 1 >= romData.size())
-            return false;
-        return true;
+        return ptr >= AGB_MAP_ROM && size_t(ptr - AGB_MAP_ROM) < romData.size();
     }
-
     bool ValidRange(size_t pos, size_t len) const
     {
-        if (pos + len >= romData.size())
-            return false;
-        return true;
+        return pos <= romData.size() && len <= romData.size() - pos;
     }
 
     std::string ReadString(size_t pos, size_t limit) const;
@@ -99,6 +80,11 @@ public:
     bool IsGsf() const;
 
 private:
+    void CheckRange(size_t pos, size_t len) const
+    {
+        if (!ValidRange(pos, len)) [[unlikely]]
+            throw Xcept("ROM read out of range: offset={:#x}, length={:#x}, ROM size={:#x}", pos, len, romData.size());
+    }
     void Verify();
     void LoadFile(const std::filesystem::path &filePath);
     bool LoadZip(const std::filesystem::path &filePath);

@@ -13,6 +13,8 @@ MP2KPlayer::MP2KPlayer(const MP2KContext &ctx, const PlayerInfo &playerInfo, uin
 
 void MP2KPlayer::Init(const Rom &rom, size_t songHeaderPos)
 {
+    if (songHeaderPos != 0 && !rom.ValidRange(songHeaderPos, 8))
+        throw Xcept("Song header is outside ROM: {:#x}", songHeaderPos);
     this->songHeaderPos = songHeaderPos;
 
     if (songHeaderPos != 0) {
@@ -20,10 +22,12 @@ void MP2KPlayer::Init(const Rom &rom, size_t songHeaderPos)
         tracksUsed = std::min<uint8_t>(rom.ReadU8(songHeaderPos + 0), trackLimit);
         priority = rom.ReadU8(songHeaderPos + 2);
         reverb = rom.ReadU8(songHeaderPos + 3);
-        if (rom.ValidPointer(rom.ReadU32(songHeaderPos + 4)))
+        bankPos = 0;
+        if (tracksUsed != 0) {
             bankPos = rom.ReadAgbPtrToPos(songHeaderPos + 4);
-        else
-            bankPos = 0;
+            if (!rom.ValidRange(bankPos, 12))
+                throw Xcept("Voice table header is outside ROM");
+        }
 
         // read track pointers
         for (size_t i = 0; i < tracksUsed; i++)

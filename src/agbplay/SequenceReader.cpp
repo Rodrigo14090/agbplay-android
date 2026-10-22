@@ -139,7 +139,12 @@ bool SequenceReader::TrackMain(MP2KPlayer &player, MP2KTrack &trk)
     TickTrackNotes(trk);
 
     /* Count down track delay and process events if necessary. */
+    // A malformed GOTO/PATT loop can run forever without advancing GBA time.
+    // This generous per-track tick budget leaves ordinary sequences unchanged.
+    size_t commandsRemaining = 16384;
     while (trk.delay == 0) {
+        if (commandsRemaining-- == 0)
+            throw Xcept("Sequence command budget exceeded at {:#x} (track {})", trk.pos, trk.trackIdx);
         uint8_t cmd = rom.ReadU8(trk.pos);
 
         // check if a previous command should be repeated
