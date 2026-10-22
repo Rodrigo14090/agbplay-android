@@ -320,6 +320,7 @@ void PlaybackEngine::Recover(const char *message)
     ctx->m4aSoundClear();
     for (auto &player : ctx->players)
         player.Init(ctx->rom, 0);
+    ctx->primaryPlayer = 0;
     paused = true;
     songEnded = false; // do not automatically advance through broken table entries
     {

@@ -22,7 +22,7 @@ public:
     void read(std::span<uint8_t> buffer) override
     {
         ifs.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
-        if (ifs.bad())
+        if (!ifs || ifs.gcount() != static_cast<std::streamsize>(buffer.size()))
             throw Xcept("Could not read file: bad bit is set");
     }
     size_t size() override
@@ -32,6 +32,8 @@ public:
         if (fileEnd == -1)
             throw Xcept("Error seeking in input file");
         ifs.seekg(0, std::ios_base::beg);
+        if (static_cast<uint64_t>(fileEnd) > 64 * 1024 * 1024)
+            throw Xcept("Input file exceeds 64 MiB limit");
         return static_cast<size_t>(fileEnd);
     }
     void close() override { ifs.close(); }
@@ -64,12 +66,16 @@ public:
     void read(std::span<uint8_t> buffer) override
     {
         const int64_t bytesRead = zip_fread(file, static_cast<void *>(buffer.data()), buffer.size());
-        if (bytesRead == 0)
+        if (bytesRead >= 0 && static_cast<uint64_t>(bytesRead) != buffer.size())
             throw Xcept("zip_fread(): end of file reached");
         if (bytesRead == -1)
             throw Xcept("zip_fread(): error occured while reading: {}", zip_file_strerror(file));
     }
-    size_t size() override { return static_cast<size_t>(s.size); }
+    size_t size() override {
+        if (s.size > 64 * 1024 * 1024)
+            throw Xcept("ZIP member exceeds 64 MiB limit");
+        return static_cast<size_t>(s.size);
+    }
     void close() override
     {
         if (file) {
@@ -105,7 +111,7 @@ bool FileReader::forEachInZip(
     std::unique_ptr<zip_error_t, decltype(errorDel)> error(new zip_error_t, errorDel);
     zip_error_init(error.get());
 
-    auto sourceDel = [](zip_source_t *s) { (void)zip_source_close(s); };
+    auto sourceDel = [](zip_source_t *s) { zip_source_free(s); };
     std::unique_ptr<zip_source_t, decltype(sourceDel)> source(
 #if _WIN32
         zip_source_win32w_create(p.wstring().c_str(), 0, -1, error.get()),
@@ -128,6 +134,10 @@ bool FileReader::forEachInZip(
 
         throw Xcept("FileReader: Unable to open zip file: {}", zip_error_strerror(error.get()));
     }
+
+    // zip_open_from_source takes ownership on success. Keeping both owners causes
+    // a use-after-free in source's deleter when archive is destroyed.
+    source.release();
 
     const uint64_t numFilesInZip = static_cast<uint64_t>(zip_get_num_entries(archive.get(), 0));
 

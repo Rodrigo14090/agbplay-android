@@ -147,6 +147,7 @@ void Settings::Save()
     j["exportQuickExportAsk"] = exportQuickExportAsk;
     j["lastOpenFileDirectory"] = lastOpenFileDirectory;
 
+    std::filesystem::create_directories(ConfigPath().parent_path());
     std::ofstream fileStream(ConfigPath());
     if (!fileStream.is_open()) {
         const std::string err = strerror(errno);

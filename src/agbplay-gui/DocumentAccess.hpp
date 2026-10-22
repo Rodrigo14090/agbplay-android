@@ -7,3 +7,6 @@ namespace DocumentAccess {
 // Native paths are returned unchanged. The caller never needs broad storage permission.
 std::filesystem::path LocalCopy(const QString &document);
 }
+namespace DocumentAccess {
+bool ShareFile(const QString &path);
+}

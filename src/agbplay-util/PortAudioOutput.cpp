@@ -2,6 +2,8 @@
 #include "Debug.hpp"
 #include "Xcept.hpp"
 #include <algorithm>
+#include <cassert>
+#include <vector>
 #include <bit>
 #include <cmath>
 #include <cstring>

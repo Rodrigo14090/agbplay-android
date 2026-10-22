@@ -27,6 +27,8 @@ static void Decompress(std::span<const uint8_t> compressedData, std::vector<uint
     std::unique_ptr<z_stream, decltype(streamDel)> strmRaii(&strm, streamDel);
 
     while (true) {
+        if (decompressedData.size() >= 32 * 1024 * 1024 + 4096)
+            throw Xcept("GSF decompression exceeds GBA ROM size limit");
         decompressedData.resize(decompressedData.size() + CHUNK_SIZE);
         strm.next_out = reinterpret_cast<Bytef *>(&decompressedData[strm.total_out]);
         strm.avail_out = CHUNK_SIZE;
@@ -74,7 +76,7 @@ static bool ReadGsfData(
     }
 
     unsigned long crc = crc32_z(0, nullptr, 0);
-    crc = crc32_z(crc, reinterpret_cast<const Bytef *>(&gsfData[dataOffset]), compProgramSize);
+    crc = crc32_z(crc, reinterpret_cast<const Bytef *>(gsfData.data() + dataOffset), compProgramSize);
     if (crc != compProgramCrc32)
         throw Xcept(
             "ReadGsfData(): program data crc32 mismatch: expected={:#08x} calculated={:#08x}", compProgramCrc32, crc
@@ -87,7 +89,7 @@ static bool ReadGsfData(
     if (tagDataSize > 50000)
         tagDataSize = 50000;    // do I understand Neill Corlett's doc right that this is limited to 50k bytes?
 
-    tagData.assign(reinterpret_cast<const char *>(&gsfData[dataOffset]), tagDataSize);
+    tagData.assign(reinterpret_cast<const char *>(gsfData.data() + dataOffset), tagDataSize);
     return true;
 }
 

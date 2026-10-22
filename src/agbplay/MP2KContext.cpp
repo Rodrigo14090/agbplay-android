@@ -108,8 +108,8 @@ void MP2KContext::m4aSongNumStart(uint16_t songId)
     const size_t tablePos = songTableInfo.pos + songId * 8;
     const size_t songPos = (rom.ReadU32(tablePos) != 0) ? rom.ReadAgbPtrToPos(tablePos) : 0;
     const uint8_t playerIdx = m4aSongNumPlayerGet(songId);
-    primaryPlayer = playerIdx;
     m4aMPlayStart(playerIdx, songPos);
+    primaryPlayer = playerIdx;
 }
 
 void MP2KContext::m4aSongNumStartOrChange(uint16_t songId)

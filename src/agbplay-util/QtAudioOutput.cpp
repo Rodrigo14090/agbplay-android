@@ -49,7 +49,7 @@ public:
 #else
         sink->start(&source);
 #endif
-        if (sink->error() != QtAudio::NoError)
+        if (sink->error() != QAudio::NoError)
             throw Xcept("Qt could not start audio output (error {})", static_cast<int>(sink->error()));
     }
     ~QtAudioOutput() override { sink->stop(); }

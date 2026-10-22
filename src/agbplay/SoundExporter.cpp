@@ -83,6 +83,10 @@ void SoundExporter::Export()
     size_t numThreads = std::thread::hardware_concurrency();
     if (numThreads == 0)
         numThreads = 1;
+    numThreads = std::min(numThreads, std::max<size_t>(1, profile.playlist.size()));
+#ifdef __ANDROID__
+    numThreads = std::min<size_t>(numThreads, 2); // bound per-song mixer memory on phones
+#endif
     std::vector<std::thread> workers;
     for (size_t i = 0; i < numThreads; i++)
         workers.emplace_back(threadFunc);
@@ -110,7 +114,7 @@ void SoundExporter::Export()
     }
 
     if (cancel)
-        Debug::print("Export operation was cancelled. Please check the log for errors!");
+        throw Xcept("Export failed. Please check the log for the song and error.");
 }
 
 /*

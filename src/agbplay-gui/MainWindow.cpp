@@ -13,6 +13,9 @@
 #include "Rom.hpp"
 #include "SelectProfileDialog.hpp"
 #include "Settings.hpp"
+#include "OS.hpp"
+#include <QFile>
+#include <QDir>
 #include "SettingsWindow.hpp"
 #include "SoundExporter.hpp"
 
@@ -172,6 +175,19 @@ void MainWindow::SetupMenuBar()
     benchmarkSelectedAction->setEnabled(false);
     connect(benchmarkSelectedAction, &QAction::triggered, [this](bool) { ExportAudio(true, false, false); });
 
+#ifdef Q_OS_ANDROID
+    auto *shareExport = fileMenu->addAction("Share Exported WAV");
+    connect(shareExport, &QAction::triggered, this, [this] {
+        if (exportBusy) { ExportStillInProgress(); return; }
+        QDir directory(QString::fromStdString(OS::GetMusicDirectory().string()));
+        const auto files = directory.entryList({"*.wav"}, QDir::Files, QDir::Time);
+        if (files.isEmpty()) { MBoxInfo("Export", "No WAV exports yet."); return; }
+        bool ok = false;
+        const auto file = QInputDialog::getItem(this, "Share Export", "WAV file:", files, 0, false, &ok);
+        if (ok && !DocumentAccess::ShareFile(directory.absoluteFilePath(file)))
+            MBoxError("Share Export", "Android could not share the selected export.");
+    });
+#endif
     fileMenu->addSeparator();
 
     QAction *fileQuit = fileMenu->addAction("Quit");
@@ -916,6 +932,13 @@ void MainWindow::ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick
     fileDialog.setDirectory(QString::fromStdWString(settings->exportQuickExportDirectory.wstring()));
 
     std::filesystem::path directory;
+#ifdef Q_OS_ANDROID
+    // Native directory picker returns a SAF tree URI, which libsndfile cannot open.
+    // Render privately; the Share Export action grants access to a selected WAV.
+    directory = OS::GetMusicDirectory();
+    if (!benchmarkOnly)
+        LogAppend("Export directory: " + directory.string());
+#else
     if (benchmarkOnly) {
         directory.clear();
     } else if (quick && !settings->exportQuickExportAsk) {
@@ -927,6 +950,8 @@ void MainWindow::ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick
         assert(fileDialog.selectedFiles().size() == 1);
         directory = fileDialog.selectedFiles().at(0).toStdWString();
     }
+
+#endif
 
     /* Make a Profile copy for use in export thread.
      * That way we do not overwrite it while exporting. */
@@ -1022,20 +1047,11 @@ void MainWindow::SaveLog()
 
     assert(fileDialog.selectedFiles().size() == 1);
 
-    std::filesystem::path selectedFile;
-    try {
-        selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(0));
-    } catch (const std::exception &e) {
-        MBoxError("Open document", e.what());
-        return;
+    QFile output(fileDialog.selectedFiles().at(0));
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        output.write(logWidget.toPlainText().toUtf8()) < 0) {
+        MBoxError("Save log file failed", output.errorString().toStdString());
     }
-    std::ofstream fileStream(selectedFile);
-    if (!fileStream.is_open()) {
-        MBoxError("Save log file failed", fmt::format("Failed to save file: {}", strerror(errno)));
-        return;
-    }
-
-    fileStream << logWidget.toPlainText().toStdString();
 }
 
 void MainWindow::SaveProfile()
