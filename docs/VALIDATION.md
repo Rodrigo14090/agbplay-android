@@ -10,6 +10,8 @@
 - `org.agbplay.android`, versionName `1.0.4-android-dev`, versionCode **5**; mínimo API 28, target API 35 y compile SDK 36.
 - Qt Multimedia 6.11.2, NDK 27.2.12479018, código nativo Release y paquete de desarrollo firmado.
 - [Workflow de construcción y regresión](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126).
+- Workflow completo **aprobado**: cinco trabajos, incluidos host normal/sanitizado, GUI, SAF Android y APK ARM64.
+- [Informe CI normal](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126/artifacts/12424262312).
 - [Informe CI sanitizado](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39773826126/artifacts/12424245497) (incluye resultados completos de las pruebas de audio).
 
 El usuario confirmó numerosos underruns físicos de 1.0.3 con callbacks de 96
