@@ -1296,19 +1296,33 @@ void MainWindow::StatusUpdate()
         const auto now = std::chrono::steady_clock::now();
         if (now - lastAudioReport >= std::chrono::seconds(5)) {
             const auto d = playbackEngine->TakeAudioDiagnostics();
-            Debug::print("Android audio (5s): underrun callbacks={}, missing frames={}, "
-                         "queue min/max={} / {} frames, callbacks={}..{} frames, "
-                         "output RMS/peak={:.6f}/{:.6f}, clipped/nonfinite samples={}/{}, max synth={} ms, "
-                         "producer gap={} ms, callback interval={} ms, callback={} ms",
-                         d.queue.underrunCallbacks, d.queue.underrunFrames,
-                         d.queue.minQueued, d.queue.maxQueued,
+            Debug::print("Android audio ({}s): underrun callbacks={}, missing frames={}, "
+                         "queue before callback min/max={}/{}, producer peak={}, target/low={}/{} frames "
+                         "({:.2f}/{:.2f} ms), synthesis block={} frames",
+                         d.elapsedSeconds, d.queue.underrunCallbacks, d.queue.underrunFrames,
+                         d.queue.minQueued, d.queue.maxQueued, d.queue.maxStored,
+                         d.targetFrames, d.lowWatermarkFrames,
+                         1000.0 * static_cast<double>(d.targetFrames) / d.sampleRate,
+                         1000.0 * static_cast<double>(d.lowWatermarkFrames) / d.sampleRate,
+                         d.synthesisBlockFrames);
+            Debug::print("Android timing: callbacks={}..{} frames, {:.2f} Hz / {:.0f} frames/s, "
+                         "produced={}, max synth={:.3f} ms, visualizer={:.3f} ms, producer work={:.3f} ms, "
+                         "producer gap={:.3f} ms, wake lateness={:.3f} ms, callback interval={:.3f} ms, callback={:.3f} ms",
                          d.minCallbackFrames, d.maxCallbackFrames,
-                         d.outputRms, d.outputPeak,
-                         d.clippedSamples, d.nonFiniteSamples,
+                         d.elapsedSeconds > 0 ? static_cast<double>(d.callbackCount) / d.elapsedSeconds : 0.0,
+                         d.elapsedSeconds > 0 ? static_cast<double>(d.requestedFrames) / d.elapsedSeconds : 0.0,
+                         d.producedFrames,
                          static_cast<double>(d.maxSynthesisNs) / 1.0e6,
+                         static_cast<double>(d.maxVisualizerNs) / 1.0e6,
+                         static_cast<double>(d.maxProducerWorkNs) / 1.0e6,
                          static_cast<double>(d.maxProducerGapNs) / 1.0e6,
+                         static_cast<double>(d.maxWakeLatenessNs) / 1.0e6,
                          static_cast<double>(d.maxCallbackIntervalNs) / 1.0e6,
                          static_cast<double>(d.maxCallbackNs) / 1.0e6);
+            Debug::print("Android PCM: output RMS/peak={:.6f}/{:.6f}, clipped/nonfinite samples={}/{}, "
+                         "metered samples={}, telemetry dropped frames={}",
+                         d.outputRms, d.outputPeak, d.clippedSamples, d.nonFiniteSamples,
+                         d.meteredSamples, d.meterDroppedFrames);
             lastAudioReport = now;
         }
 #endif

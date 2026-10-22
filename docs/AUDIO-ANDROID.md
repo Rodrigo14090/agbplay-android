@@ -1,73 +1,156 @@
-# Diagnóstico de audio Android
+# Audio Android: underruns de 1.0.3 y corrección en 1.0.4
 
-## Camino de reproducción
+## Evidencia del teléfono
 
-`MP2KContext::m4aSoundMain()` y `SoundMixer` siguen generando el PCM estéreo
-`float` usado por escritorio y Android. `PlaybackEngine` ejecuta la síntesis en
-un hilo productor; `AudioFrameQueue` es una cola SPSC sin bloqueos que conserva
-el orden de las muestras. El callback de `QAudioSink` consume esa cola y aplica
-el control de volumen lineal antes de entregar las muestras.
+Los registros aportados por el usuario son mediciones de un Android ARM64 real,
+no pruebas sintéticas. AAudio solicita 96 frames a 48 kHz: **2 ms por callback**.
+En los seis intervalos se registraron 110, 165, 106, 112, 78 y 9 callbacks sin PCM
+suficiente; faltaron 8312, 11496, 7440, 7216, 5456 y 568 frames. El máximo de cola
+observado al entrar al callback fue 296 frames (6,17 ms). Los intervalos entre
+comienzos de producción llegaron a 10,139 ms; el máximo de trabajo de síntesis
+reportado llegó a 4,932 ms. Prioridad -16, float32 estéreo, ganancia Qt 1.0,
+clipping y no finitos = 0. Los dos últimos intervalos coincidieron con interacción
+táctil y tuvieron menos pérdidas. Eso prueba discontinuidad de suministro; no
+prueba distorsión armónica ni identifica un gobernador de CPU concreto.
 
-Qt 6.11 usa AAudio en Android. La documentación y el código de Qt 6.11.2
-confirman que `QAudioSink::start(QSpan<float>)` llama desde el callback de audio
-de AAudio, con muestras `float` intercaladas; el tamaño del bloque lo decide el
-backend. `QAudioSink::setBufferSize()` no aplica a esta interfaz, por lo que ya
-no se llama en la ruta de callback. Qt abre AAudio en modo de baja latencia y
-solicita 1024 frames de capacidad. La aplicación pide la frecuencia configurada,
-dos canales y `QAudioFormat::Float`; la apertura falla explícitamente si el
-dispositivo no declara ese formato compatible. AAudio puede convertir después
-al formato del hardware.
+## Causa comprobable en el código
 
-La escala de volumen de la aplicación es cuadrática: 100% equivale a `1.0`, y
-QAudioSink conserva su ganancia predeterminada `1.0`. El código no convierte a
-PCM entero ni cambia/remuestrea la salida después del motor. El remuestreo
-MP2K/M4A y sus perfiles siguen intactos.
+La política anterior dejaba de producir al superar `outputNumBuffers *
+callbackFrames`. Con el valor predeterminado 2 y callbacks de 96, el objetivo
+se reducía a **192 frames / 4 ms**. Después esperaba 1 ms en un condition_variable;
+la espera puede terminar varios milisegundos tarde por planificación. No había
+una reserva temporal mínima ni precarga antes de iniciar el dispositivo.
 
-## Corrección de planificación y mediciones
+El motor produce **200 frames / 4,167 ms** por `m4aSoundMain()` a 48 kHz:
+`floor(48000 / (59,7275 * INTERFRAMES))`, con INTERFRAMES=4. El objetivo anterior
+permitía reponer sólo uno o dos microbloques antes de volver a dormir. Un
+retraso de 7–10 ms podía agotar esa reserva. Los 296 frames del registro son una
+muestra *antes de leer*, no el pico exacto después de escribir. Ahora se registran
+ambos valores por separado.
 
-El hilo de síntesis ahora solicita `THREAD_PRIORITY_AUDIO` (-16) mediante la API
-de Android. Antes era un hilo de prioridad normal que podía perder tiempo de CPU
-frente al callback AAudio; el hecho de que tocar la pantalla mejorara el sonido
-es compatible con una demora del productor, aunque por sí solo no demostraba que
-hubiera underruns.
+No hay dependencia del event loop Qt para producir PCM. La correlación táctil
+es compatible con cambios en planificación/frecuencia de CPU, pero los logs no
+permiten confirmar ese mecanismo del kernel. Priorizar el hilo no resolvía el
+error de presupuesto: un productor con una reserva inferior a sus demoras sigue
+sufriendo underruns.
 
-Cuando la ventana **Log** está visible, la aplicación informa cada cinco
-segundos:
+También había un mutex compartido con el visualizador: el productor podía
+esperar mientras la UI copiaba vectores. La publicación ahora usa `try_lock` y
+omite una actualización visual si el lector está ocupado. No omite PCM.
 
-- cantidad de callbacks con underrun y frames ausentes que fueron rellenados
-  con silencio;
-- ocupación mínima y máxima observada de la cola, en frames estéreo;
-- mínimo y máximo tamaño de callback;
-- RMS y pico de las muestras `float` después del volumen de la aplicación;
-- muestras con amplitud absoluta >= 1.0 y muestras no finitas;
-- tiempo máximo de una mezcla, intervalo entre inicios de bloques producidos,
-  intervalo entre callbacks y duración máxima del callback.
+## Política y ciclo de vida
 
-También registra la frecuencia, canales, formato, dispositivo, tamaño de buffer
-que reporta Qt y volumen de QAudioSink. La medición RMS es la energía de las
-muestras finitas entregadas al backend durante la ventana; los contadores de
-underrun describen continuidad y no se usan para inferir fidelidad espectral.
+`AudioBufferPolicy` establece para Android un **mínimo de 30 ms** de PCM; mantiene
+la preferencia existente de número de buffers si ésta solicita más. A 48 kHz y
+96 frames/callback, el objetivo es 1440 frames, con umbral de reposición de 1200
+frames / 25 ms. El productor rellena hasta el objetivo en un lote de microbloques
+originales y calcula con el PCM restante el próximo plazo de reposición.
+`condition_variable::wait_until` usa el reloj monotónico; comandos, cambio de
+preferencias, suspensión y cierre interrumpen la espera. El callback no notifica
+condition_variables, no espera ni utiliza mutexes.
 
-## Fidelidad y verificación
+Con bloques de 200, la cola de reproducción suele moverse entre 25 y menos de
+34,17 ms si el productor despierta a tiempo. Ésa es latencia de la app; se añade a
+la del dispositivo. El margen se eligió frente a las demoras medidas de unos
+10 ms y picos de trabajo de unos 5 ms. No promete cubrir paradas ilimitadas ni una
+síntesis permanentemente más lenta que tiempo real. Los ensayos de 20, 30 y 40 ms
+permiten comprobar el compromiso; 30 ms deja margen para un reproductor musical.
 
-La cola copia exactamente los valores `float` de izquierda/derecha; no tiene
-conversión de tipo, limitador ni etapa de remuestreo. El control de volumen es
-el único cambio deliberado al valor de muestra antes del backend. Las pruebas
-de `safety` verifican el orden y el valor del FIFO con distintos wraps, y ahora
-comprueban también que un underrun se cuenta por callback y por frame. Las
-pruebas `playback` y toda la suite de escritorio verifican el motor con el
-backend falso y las funciones de reproducción.
+La capacidad física del FIFO sigue siendo 32768 frames / 256 KiB. A 48 kHz el
+objetivo de 1440 frames ocupa 11,25 KiB de PCM. No se aumentó la capacidad ni se
+cambió el tamaño de bloque del mezclador. Se comprueba espacio disponible antes
+de sintetizar, y todos los `Put` verifican la capacidad sin descartar PCM
+producido. Los cursores SPSC tienen publicación release/adquisición acquire y
+están separados en líneas de caché; ninguna parte externa reinicia el FIFO.
 
-La ruta de síntesis está compartida con escritorio y no se modificó. No había
-una ROM proporcionada que se pudiera reproducir en ambos equipos ni un Android
-físico conectado a este entorno, así que no se afirma una comparación de RMS,
-pico o espectro para la canción observada. Como referencia independiente del
-dispositivo, la ROM sintética de `test-safety` en escritorio (48 kHz, 600
-bloques) dio RMS **0,0373691**, pico **0,332435** y **240.000** valores de canal;
-el FIFO entregó las muestras en orden y el test de underrun contó cuatro frames
-ausentes de forma explícita. La instrumentación permite recoger
-esa medición en el teléfono sin enviar la ROM: abre **Log** mientras suena la
-canción y comparte las líneas `Qt audio output`, `Android synthesis thread` y
-`Android audio (5s)`. Los datos de la misma ROM y los mismos ajustes permitirán
-distinguir un underrun de clipping o de una diferencia acústica posterior a
-AAudio.
+Antes de abrir el backend se inicia el productor y se espera a la precarga. Al
+reanudar una suspensión explícita, se rellena con el dispositivo todavía
+suspendido. La construcción que falla detiene y une el hilo. El cierre detiene
+primero los callbacks, luego solicita fin bajo el mutex que protege la espera,
+notifica y une el productor, evitando perder la notificación al suspender.
+Los comandos conservan la cola ordenada; cambios, mute y pausa pueden tardar
+hasta el PCM ya encolado (aproximadamente 34 ms con los valores predeterminados).
+
+Escritorio conserva por defecto la preferencia de períodos y su espera de 1 ms;
+las pruebas Linux ejecutan también explícitamente la política temporal Android.
+La actualización del tamaño real de callback ahora se aplica a ambos backends.
+PortAudio mantiene su conversión de muestras original.
+
+## Callback, formato y medición
+
+Qt 6.11.2 usa el callback de AAudio. La app solicita la frecuencia configurada,
+dos canales y `QAudioFormat::Float`; los floats están intercalados L/R. No hay
+conversión propia a enteros ni remuestreo posterior. El mezclador y SINC/BLEP/BLAMP
+no cambian. La escala cuadrática del slider conserva 100%=ganancia 1.0. Los logs
+del teléfono no justifican amplificar una salida con pico 0,47–0,54 y cero clipping.
+
+Los 96000 bytes de `QAudioSink::bufferSize()` son el reporte del ringbuffer Qt
+(de unos 250 ms a 48 kHz), **no** una medida del buffer nativo AAudio ni del FIFO
+de agbplay. Qt evita ese ringbuffer al usar el callback. `setBufferSize()` sólo
+se usa en la ruta QIODevice de Qt anterior a 6.11. El código de Qt solicita baja
+latencia, capacidad nativa de 1024 frames y tres bursts; el tamaño real concedido
+por Android no se expone por esta API pública. No se presenta como medido.
+
+El callback se limita a leer PCM, aplicar el volumen original y copiar a una
+captura SPSC preasignada. Los contadores, marcas de tiempo y actualizaciones de
+máximos son operaciones lock-free; no hay I/O, asignaciones ni análisis RMS en
+él. El productor analiza esa captura y publica RMS, pico, clipping y no finitos
+fuera del callback. La captura añade 256 KiB sólo en Android o en pruebas que
+activan diagnóstico. Si se llena, se pierde telemetría y se cuenta como tal; no
+se pierde PCM de reproducción. El análisis por iteración también está acotado.
+La energía se acumula como double, evitando la conversión a entero potencialmente
+fuera de rango de la instrumentación anterior.
+
+Cada informe del Log incluye:
+
+- underrun callbacks y missing frames (sólo el FIFO de salida de la app);
+- cola mínima/máxima antes de leer, pico del productor, objetivo y umbral en
+  frames/ms y tamaño de microbloque;
+- cantidad y frecuencia efectiva de callbacks, frames solicitados/segundo y
+  frames producidos;
+- máximo de síntesis pura, visualizador, trabajo del productor, intervalo entre
+  comienzos de producción, retraso respecto al plazo de despertar, intervalo y
+  duración del callback;
+- RMS, pico, clipping/no finitos, valores analizados y frames de telemetría
+  descartados. La captura puede llevar algunos milisegundos de retraso.
+
+El intervalo entre bloques incluye la espera deliberada; **no** es el coste de
+síntesis. La medida antigua `max synth` incluía también visualización y publicación;
+la nueva los separa. Los contadores se reinician al consultar cada ventana. No se
+mide el contador de xruns interno de AAudio porque Qt no lo expone públicamente.
+
+## Pruebas y límites
+
+`audio-buffering` usa el mismo FIFO y la misma política que la app. Un simulador
+de eventos discretos solicita 96 frames cada 2 ms exactos, separando el coste de
+síntesis de la tardanza al despertar. Verifica distintos bloques (64, 100, 200,
+256, 480 y 1024 frames), retrasos de 10 ms, picos de síntesis de 5 ms, diez minutos
+simulados con retrasos de 15 ms, FIFO lleno/vacío y reserva de 20–40 ms. La política
+anterior reproduce pérdidas. Paradas de 45 ms y síntesis sostenida de 5 ms por
+200 frames provocan pérdidas esperadas y contadas: una reserva finita no puede
+compensar generación sostenida de sólo 40000 frames/s para consumir 48000.
+
+Las pruebas concurrentes verifican orden y muestras estéreo con escrituras de
+tamaño variable, rechazo de escrituras sin espacio, wraps y padding de silencio.
+La prueba del trabajador real usa callbacks de 96 frames, tres segundos sin
+comandos ni Qt/eventos de UI, cambios de canción, pausa, suspensión/reanudación,
+preferencias, 20 vidas de engine y fallo de apertura tras precargar.
+El backend falso usa hilos Linux y esperas nominales de 2 ms; el simulador es el
+que exige consumo exacto de 48000 frames/s independientemente del planificador.
+
+Con PCM sintético del motor original, el transporte en callbacks de 96 frames
+se compara bit a bit frente a la referencia directa para SINC, BLEP y BLAMP:
+diferencia máxima de muestra **0**, mismos RMS y picos. Esto verifica el FIFO,
+no una igualdad de salida acústica de Android con escritorio. El tono seno usado
+para probar el medidor tiene RMS conocido y el tap conserva incluso ceros con
+signo, subnormales y patrones NaN. No se introduce una prueba THD que confunda las
+armónicas propias de la muestra triangular con un defecto del backend.
+
+No hay teléfono Android conectado en el entorno de desarrollo. Cero underruns
+en simulación o Linux **no** demuestra cero underruns en ese teléfono. Tras
+instalar 1.0.4, dejar sonar 60–120 s sin tocar y recoger `Android audio`, `Android
+timing` y `Android PCM` en Log. Comparar con la misma canción durante interacción,
+con mismo perfil/frecuencia/velocidad/volumen. Si los underruns bajan a cero pero
+persiste distorsión, comparar por separado un WAV float exportado a igual perfil
+con escritorio y una captura de salida física/loopback. No atribuir a armónicos
+ni a volumen un problema que los registros no demuestran.

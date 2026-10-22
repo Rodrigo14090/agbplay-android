@@ -73,7 +73,7 @@ public:
         if (sink->error() != QAudio::NoError)
             throw Xcept("Qt could not start audio output (error {})", static_cast<int>(sink->error()));
         Debug::print("Qt audio output: device='{}', requested={} Hz / 2 channels / float32, "
-                     "QAudioSink format={} Hz / {} channels / format={}, reported buffer={} bytes, volume={:.3f}",
+                     "QAudioSink format={} Hz / {} channels / format={}, Qt ring-buffer report={} bytes (not the native callback buffer), volume={:.3f}",
                      device.description().toStdString(), rate, sink->format().sampleRate(),
                      sink->format().channelCount(), static_cast<int>(sink->format().sampleFormat()),
                      sink->bufferSize(), sink->volume());

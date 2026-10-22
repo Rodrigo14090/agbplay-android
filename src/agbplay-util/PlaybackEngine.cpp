@@ -10,37 +10,31 @@
 #include <QJniEnvironment>
 #endif
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
 namespace {
-void UpdateMaximum(std::atomic<uint64_t> &value, uint64_t candidate) noexcept
+template<class T> void UpdateMaximum(std::atomic<T> &value, T candidate) noexcept
 {
     auto current = value.load(std::memory_order_relaxed);
     while (candidate > current &&
            !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
 }
-void UpdateMaximumSize(std::atomic<size_t> &value, size_t candidate) noexcept
-{
-    auto current = value.load(std::memory_order_relaxed);
-    while (candidate > current &&
-           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
-}
-void UpdateMinimum(std::atomic<size_t> &value, size_t candidate) noexcept
+template<class T> void UpdateMinimum(std::atomic<T> &value, T candidate) noexcept
 {
     auto current = value.load(std::memory_order_relaxed);
     while (candidate < current &&
            !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
 }
-void UpdateMaximumFloat(std::atomic<float> &value, float candidate) noexcept
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point start) noexcept
 {
-    auto current = value.load(std::memory_order_relaxed);
-    while (candidate > current &&
-           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - start).count());
 }
 }
 #endif
 
-PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile)
-    : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), profile(profile)
+PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile, uint32_t reserveMs)
+    : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), sampleRate(sampleRate),
+      bufferPolicy(sampleRate, reserveMs), profile(profile)
 {
     ctx = std::make_unique<MP2KContext>(
         sampleRate,
@@ -51,11 +45,21 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
         profile.songTableInfoPlayback,
         profile.playerTablePlayback
     );
-    output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    meterQueue = std::make_unique<AudioFrameQueue>();
+#endif
     try {
         playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
+        PrimeOutput(); // PCM is available before the backend can call RenderAudio.
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio);
     } catch (...) {
         output.reset();
+        {
+            std::scoped_lock lock(playerInvokeMutex);
+            playerThreadQuitRequest = true;
+        }
+        playerInvokeReady.notify_all();
+        if (playerThread && playerThread->joinable()) playerThread->join();
         throw;
     }
 #ifdef __linux__
@@ -68,7 +72,10 @@ PlaybackEngine::~PlaybackEngine()
     output.reset(); // joins/stops the device callback before queue/context destruction
     // stop and deallocate player thread if required
     if (playerThread) {
-        playerThreadQuitRequest = true;
+        {
+            std::scoped_lock lock(playerInvokeMutex);
+            playerThreadQuitRequest = true;
+        }
         playerInvokeReady.notify_all();
         playerThread->join();
     }
@@ -276,7 +283,12 @@ void PlaybackEngine::GetVisualizerState(MP2KVisualizerState &visualizerState)
 }
 
 void PlaybackEngine::SetOutputNumBuffers(size_t numBuffers) {
-    outputNumBuffers.store(std::clamp<size_t>(numBuffers, 1, 16));
+    {
+        std::scoped_lock lock(playerInvokeMutex);
+        outputNumBuffers.store(std::clamp<size_t>(numBuffers, 1, 16));
+        ++scheduleRevision;
+    }
+    playerInvokeReady.notify_one();
 }
 
 void PlaybackEngine::SetMaxLoops(int8_t maxLoops) {
@@ -326,42 +338,77 @@ void PlaybackEngine::threadWorker()
     }
 #endif
     try {
-        std::vector<sample> silenceBuffer(ctx->mixer.GetSamplesPerBuffer());
-#ifdef __ANDROID__
-        auto lastProducedAt = std::chrono::steady_clock::now();
+        const size_t blockFrames = ctx->mixer.GetSamplesPerBuffer();
+        if (!blockFrames || blockFrames > AudioFrameQueue::Capacity)
+            throw Xcept("Invalid synthesis block size: {}", blockFrames);
+        std::vector<sample> silenceBuffer(blockFrames);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+        auto lastProducedAt = std::chrono::steady_clock::time_point{};
 #endif
         while (!playerThreadQuitRequest) {
             InvokeRun();
-            if (playerThreadQuitRequest)
-                break;
-            const auto target = std::min(AudioFrameQueue::Capacity / 2,
-                                         outputNumBuffers.load() * callbackFrames.load());
-            if (suspended.load() || queue.Queued() > target) {
+            DrainOutputMetrics();
+            if (playerThreadQuitRequest) break;
+            if (suspended.load()) {
                 std::unique_lock lock(playerInvokeMutex);
-                playerInvokeReady.wait_for(lock, 1ms, [this] {
-                    return playerInvokePending || playerThreadQuitRequest;
+                playerInvokeReady.wait(lock, [this] {
+                    return playerInvokePending || playerThreadQuitRequest || !suspended.load();
                 });
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                lastProducedAt = {}; // intentional suspension is not a producer stall
+#endif
+                continue;
+            }
+            const size_t target = bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load());
+            const size_t queued = queue.Queued();
+            if (queued >= target || queue.Writable() < blockFrames) {
+                std::unique_lock lock(playerInvokeMutex);
+                // A control command may have changed the buffer preference
+                // between calculating target and acquiring this mutex.
+                if (target != bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load())) continue;
+                if (queued >= target && primingRequested) {
+                    primingRequested = false;
+                    playerInvokeComplete.notify_all();
+                }
+                const auto revision = scheduleRevision;
+                const auto deadline = std::chrono::steady_clock::now() + bufferPolicy.WaitForRefill(queued, target);
+                const bool interrupted = playerInvokeReady.wait_until(lock, deadline, [this, revision] {
+                    return playerInvokePending || playerThreadQuitRequest || suspended.load() ||
+                           scheduleRevision != revision;
+                });
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                if (!interrupted && std::chrono::steady_clock::now() > deadline)
+                    UpdateMaximum(maxWakeLatenessNs, ElapsedNs(deadline));
+#else
+                (void)interrupted;
+#endif
                 continue;
             }
             try {
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
                 const auto startedAt = std::chrono::steady_clock::now();
-                UpdateMaximum(maxProducerGapNs, static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt - lastProducedAt).count()));
+                if (lastProducedAt != std::chrono::steady_clock::time_point{})
+                    UpdateMaximum(maxProducerGapNs, static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt - lastProducedAt).count()));
                 lastProducedAt = startedAt;
 #endif
-                if (paused) {
-                    queue.Put(silenceBuffer);
-                } else {
-                    ctx->m4aSoundMain();
-                    updateVisualizerState();
-                    if (!queue.Put(ctx->masterAudioBuffer))
-                        throw Xcept("Synthesis frame exceeds audio queue capacity");
-                }
-#ifdef __ANDROID__
-                UpdateMaximum(maxSynthesisNs, static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now() - startedAt).count()));
+                if (!paused) ctx->m4aSoundMain();
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                UpdateMaximum(maxSynthesisNs, ElapsedNs(startedAt));
+                const auto visualizerAt = std::chrono::steady_clock::now();
+#endif
+                if (!paused) updateVisualizerState();
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                UpdateMaximum(maxVisualizerNs, ElapsedNs(visualizerAt));
+#endif
+                const std::span<const sample> pcm = paused ? std::span<const sample>(silenceBuffer)
+                                                         : std::span<const sample>(ctx->masterAudioBuffer);
+                // Space was checked before synthesis. Only the consumer can
+                // advance meanwhile, so failure is an invariant violation.
+                if (!queue.Put(pcm)) throw Xcept("Synthesis frame exceeds available audio queue space");
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                producedFrames.fetch_add(pcm.size(), std::memory_order_relaxed);
+                UpdateMaximum(maxProducerWorkNs, ElapsedNs(startedAt));
 #endif
                 if (ctx->SongEnded() && !songEnded) {
                     ctx->m4aMPlayAllStop();
@@ -369,10 +416,10 @@ void PlaybackEngine::threadWorker()
                     songEnded = true;
                 }
             } catch (const std::exception &e) {
-                // Bad ROM data must not terminate the worker or strand UI commands.
                 Recover(e.what());
             }
         }
+        DrainOutputMetrics();
     } catch (const std::exception &e) {
         std::scoped_lock lock(playerInvokeMutex);
         playerThreadQuitError = e.what();
@@ -410,11 +457,31 @@ std::string PlaybackEngine::TakeError()
     return std::exchange(playbackError, {});
 }
 
+void PlaybackEngine::PrimeOutput()
+{
+    std::unique_lock lock(playerInvokeMutex);
+    primingRequested = true;
+    suspended.store(false);
+    ++scheduleRevision;
+    playerInvokeReady.notify_one();
+    playerInvokeComplete.wait(lock, [this] { return !primingRequested || playerThreadQuitComplete; });
+    if (playerThreadQuitComplete) throw Xcept("Playback thread stopped while priming: {}", playerThreadQuitError);
+}
+
 void PlaybackEngine::SuspendOutput(bool suspend)
 {
-    suspended.store(suspend);
-    output->Suspend(suspend);
-    playerInvokeReady.notify_one();
+    if (suspend) {
+        {
+            std::scoped_lock lock(playerInvokeMutex);
+            suspended.store(true);
+            ++scheduleRevision;
+        }
+        playerInvokeReady.notify_one();
+        output->Suspend(true);
+    } else {
+        PrimeOutput(); // fill while the device is still suspended
+        output->Suspend(false);
+    }
 }
 
 void PlaybackEngine::updateVisualizerState()
@@ -425,9 +492,10 @@ void PlaybackEngine::updateVisualizerState()
 
     ctx->GetVisualizerState(visualizerStatePlayer);
 
-    std::scoped_lock l(visualizerStateMutex);
-
-    visualizerStateObserver = visualizerStatePlayer;
+    // The UI may allocate/copy a large snapshot while it owns this mutex.
+    // Publishing is optional; never delay the PCM producer waiting for the UI.
+    std::unique_lock lock(visualizerStateMutex, std::try_to_lock);
+    if (lock.owns_lock()) visualizerStateObserver = visualizerStatePlayer;
 }
 
 void PlaybackEngine::InvokeAsPlayer(const std::function<void(void)> &func)
@@ -465,77 +533,86 @@ void PlaybackEngine::InvokeRun()
 void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 {
     auto &self = *static_cast<PlaybackEngine *>(user);
-#ifdef __ANDROID__
+    const size_t frames = output.size() / 2;
+    self.callbackFrames.store(std::max<size_t>(1, frames), std::memory_order_relaxed);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
     const auto startedAt = std::chrono::steady_clock::now();
     const auto startedNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt.time_since_epoch()).count());
     const auto previousCallbackNs = self.lastCallbackStartNs.exchange(startedNs, std::memory_order_relaxed);
     if (previousCallbackNs != 0 && startedNs >= previousCallbackNs)
         UpdateMaximum(self.maxCallbackIntervalNs, startedNs - previousCallbackNs);
-    const size_t frames = output.size() / 2;
-    self.callbackFrames.store(std::max<size_t>(1, frames), std::memory_order_relaxed);
     UpdateMinimum(self.minCallbackFrames, frames);
-    UpdateMaximumSize(self.maxCallbackFrames, frames);
+    UpdateMaximum(self.maxCallbackFrames, frames);
+    self.callbackCount.fetch_add(1, std::memory_order_relaxed);
+    self.callbackRequestedFrames.fetch_add(frames, std::memory_order_relaxed);
 #endif
     self.queue.Take(output);
     const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
-#ifdef __ANDROID__
-    double sumSquares = 0.0;
-    float peak = 0.0f;
-    uint64_t clippedSamples = 0;
-    uint64_t finiteSamples = 0;
-    uint64_t nonFiniteSamples = 0;
-#endif
     for (size_t i = 0; i + 1 < output.size(); i += 2) {
         output[i] *= self.playerThreadVolumeCur;
         output[i + 1] *= self.playerThreadVolumeCur;
-#ifdef __ANDROID__
-        for (const float value : {output[i], output[i + 1]}) {
-            if (std::isfinite(value)) {
-                sumSquares += static_cast<double>(value) * value;
-                peak = std::max(peak, std::abs(value));
-                clippedSamples += static_cast<uint64_t>(std::abs(value) >= 1.0f);
-                ++finiteSamples;
-            } else {
-                ++nonFiniteSamples;
-            }
-        }
-#endif
         self.playerThreadVolumeCur += self.volumeRampCoeff * (target - self.playerThreadVolumeCur);
     }
-#ifdef __ANDROID__
-    self.callbackSumSquaresScaled.fetch_add(static_cast<uint64_t>(sumSquares * 1.0e9), std::memory_order_relaxed);
-    self.callbackSampleCount.fetch_add(finiteSamples, std::memory_order_relaxed);
-    UpdateMaximumFloat(self.callbackPeak, peak);
-    self.callbackClippedSamples.fetch_add(clippedSamples, std::memory_order_relaxed);
-    self.callbackNonFiniteSamples.fetch_add(nonFiniteSamples, std::memory_order_relaxed);
-    UpdateMaximum(self.maxCallbackNs, static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - startedAt).count()));
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    // Bounded PCM tap: only a copy on the realtime thread. Analysis runs on
+    // the producer. If telemetry fills, drop telemetry, never playback PCM.
+    if (!self.meterQueue->PutInterleaved(output))
+        self.meterDroppedFrames.fetch_add(frames, std::memory_order_relaxed);
+    UpdateMaximum(self.maxCallbackNs, ElapsedNs(startedAt));
+#endif
+}
+
+void PlaybackEngine::DrainOutputMetrics()
+{
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    std::unique_lock lock(pcmStatsMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+    std::array<float, 1024> pcm;
+    // Bound analysis even if the consumer is continuously filling the tap.
+    for (int block = 0; block < 8; ++block) {
+        const size_t frames = meterQueue->Read(pcm);
+        if (!frames) break;
+        pcmStats.Add(std::span<const float>(pcm).first(frames * 2));
+    }
 #endif
 }
 
 PlaybackEngine::AudioDiagnostics PlaybackEngine::TakeAudioDiagnostics() noexcept
 {
-#ifdef __ANDROID__
-    const uint64_t squares = callbackSumSquaresScaled.exchange(0, std::memory_order_relaxed);
-    const uint64_t samples = callbackSampleCount.exchange(0, std::memory_order_relaxed);
-    const size_t minFrames = minCallbackFrames.exchange(static_cast<size_t>(-1), std::memory_order_relaxed);
-    return {
-        queue.TakeDiagnostics(),
-        maxSynthesisNs.exchange(0, std::memory_order_relaxed),
-        maxProducerGapNs.exchange(0, std::memory_order_relaxed),
-        maxCallbackNs.exchange(0, std::memory_order_relaxed),
-        maxCallbackIntervalNs.exchange(0, std::memory_order_relaxed),
-        minFrames == static_cast<size_t>(-1) ? 0 : minFrames,
-        maxCallbackFrames.exchange(0, std::memory_order_relaxed),
-        samples ? std::sqrt(static_cast<double>(squares) /
-                            (1.0e9 * static_cast<double>(samples))) : 0.0,
-        callbackPeak.exchange(0.0f, std::memory_order_relaxed),
-        callbackClippedSamples.exchange(0, std::memory_order_relaxed),
-        callbackNonFiniteSamples.exchange(0, std::memory_order_relaxed)
-    };
-#else
-    return {};
+    AudioDiagnostics result{};
+    result.queue = queue.TakeDiagnostics();
+    result.sampleRate = sampleRate;
+    result.targetFrames = bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load());
+    result.lowWatermarkFrames = bufferPolicy.LowWatermark(result.targetFrames);
+    result.synthesisBlockFrames = ctx->mixer.GetSamplesPerBuffer(); // immutable after construction
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    const auto now = std::chrono::steady_clock::now();
+    result.elapsedSeconds = std::chrono::duration<double>(now - diagnosticsAt).count();
+    diagnosticsAt = now;
+    result.maxSynthesisNs = maxSynthesisNs.exchange(0, std::memory_order_relaxed);
+    result.maxProducerGapNs = maxProducerGapNs.exchange(0, std::memory_order_relaxed);
+    result.maxCallbackNs = maxCallbackNs.exchange(0, std::memory_order_relaxed);
+    result.maxCallbackIntervalNs = maxCallbackIntervalNs.exchange(0, std::memory_order_relaxed);
+    result.minCallbackFrames = minCallbackFrames.exchange(static_cast<size_t>(-1), std::memory_order_relaxed);
+    if (result.minCallbackFrames == static_cast<size_t>(-1)) result.minCallbackFrames = 0;
+    result.maxCallbackFrames = maxCallbackFrames.exchange(0, std::memory_order_relaxed);
+    result.callbackCount = callbackCount.exchange(0, std::memory_order_relaxed);
+    result.requestedFrames = callbackRequestedFrames.exchange(0, std::memory_order_relaxed);
+    result.producedFrames = producedFrames.exchange(0, std::memory_order_relaxed);
+    result.maxProducerWorkNs = maxProducerWorkNs.exchange(0, std::memory_order_relaxed);
+    result.maxVisualizerNs = maxVisualizerNs.exchange(0, std::memory_order_relaxed);
+    result.maxWakeLatenessNs = maxWakeLatenessNs.exchange(0, std::memory_order_relaxed);
+    result.meterDroppedFrames = meterDroppedFrames.exchange(0, std::memory_order_relaxed);
+    {
+        std::scoped_lock lock(pcmStatsMutex);
+        result.outputRms = pcmStats.Rms();
+        result.outputPeak = pcmStats.peak;
+        result.clippedSamples = pcmStats.clippedSamples;
+        result.nonFiniteSamples = pcmStats.nonFiniteSamples;
+        result.meteredSamples = pcmStats.finiteSamples + pcmStats.nonFiniteSamples;
+        pcmStats = {};
+    }
 #endif
+    return result;
 }
