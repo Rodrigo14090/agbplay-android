@@ -57,3 +57,15 @@ if(BUILD_TESTING AND NOT ANDROID)
 endif()
 
 qt_finalize_executable(agbplay-gui)
+
+if(ANDROID AND AGBPLAY_ANDROID_UI_PROBE)
+    qt_add_executable(android-ui-probe MANUAL_FINALIZATION ../tests/AndroidUiProbe.cpp ${AGBPLAY_GUI_QRC})
+    target_link_libraries(android-ui-probe PRIVATE agbplay-ui)
+    set_target_properties(android-ui-probe PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${PROJECT_SOURCE_DIR}/android"
+        QT_ANDROID_PACKAGE_NAME "org.agbplay.android"
+        QT_ANDROID_APP_NAME "agbplay UI regression"
+        QT_ANDROID_MIN_SDK_VERSION 28
+        QT_ANDROID_TARGET_SDK_VERSION 35)
+    qt_finalize_executable(android-ui-probe)
+endif()
