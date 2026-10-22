@@ -6,11 +6,11 @@
 #include <chrono>
 #include <cmath>
 #include <utility>
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
 #include <QJniEnvironment>
 #endif
 
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
 namespace {
 void UpdateMaximum(std::atomic<uint64_t> &value, uint64_t candidate) noexcept
 {
@@ -299,7 +299,7 @@ void PlaybackEngine::SetPlaybackVolume(float volume)
 void PlaybackEngine::threadWorker()
 {
     using namespace std::chrono_literals;
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
     // Android gives normal app threads a lower scheduling class than its audio
     // callback. Promote only this synthesis worker so UI activity cannot be
     // the event that makes the producer run often enough.
@@ -327,7 +327,7 @@ void PlaybackEngine::threadWorker()
 #endif
     try {
         std::vector<sample> silenceBuffer(ctx->mixer.GetSamplesPerBuffer());
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
         auto lastProducedAt = std::chrono::steady_clock::now();
 #endif
         while (!playerThreadQuitRequest) {
@@ -344,7 +344,7 @@ void PlaybackEngine::threadWorker()
                 continue;
             }
             try {
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
                 const auto startedAt = std::chrono::steady_clock::now();
                 UpdateMaximum(maxProducerGapNs, static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt - lastProducedAt).count()));
@@ -358,7 +358,7 @@ void PlaybackEngine::threadWorker()
                     if (!queue.Put(ctx->masterAudioBuffer))
                         throw Xcept("Synthesis frame exceeds audio queue capacity");
                 }
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
                 UpdateMaximum(maxSynthesisNs, static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(
                         std::chrono::steady_clock::now() - startedAt).count()));
@@ -465,7 +465,7 @@ void PlaybackEngine::InvokeRun()
 void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 {
     auto &self = *static_cast<PlaybackEngine *>(user);
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
     const auto startedAt = std::chrono::steady_clock::now();
     const auto startedNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt.time_since_epoch()).count());
@@ -479,7 +479,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 #endif
     self.queue.Take(output);
     const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
     double sumSquares = 0.0;
     float peak = 0.0f;
     uint64_t clippedSamples = 0;
@@ -489,7 +489,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
     for (size_t i = 0; i + 1 < output.size(); i += 2) {
         output[i] *= self.playerThreadVolumeCur;
         output[i + 1] *= self.playerThreadVolumeCur;
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
         for (const float value : {output[i], output[i + 1]}) {
             if (std::isfinite(value)) {
                 sumSquares += static_cast<double>(value) * value;
@@ -503,7 +503,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 #endif
         self.playerThreadVolumeCur += self.volumeRampCoeff * (target - self.playerThreadVolumeCur);
     }
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
     self.callbackSumSquaresScaled.fetch_add(static_cast<uint64_t>(sumSquares * 1.0e9), std::memory_order_relaxed);
     self.callbackSampleCount.fetch_add(finiteSamples, std::memory_order_relaxed);
     UpdateMaximumFloat(self.callbackPeak, peak);
@@ -517,7 +517,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 
 PlaybackEngine::AudioDiagnostics PlaybackEngine::TakeAudioDiagnostics() noexcept
 {
-#ifdef Q_OS_ANDROID
+#ifdef __ANDROID__
     const uint64_t squares = callbackSumSquaresScaled.exchange(0, std::memory_order_relaxed);
     const uint64_t samples = callbackSampleCount.exchange(0, std::memory_order_relaxed);
     const size_t minFrames = minCallbackFrames.exchange(static_cast<size_t>(-1), std::memory_order_relaxed);
