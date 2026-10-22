@@ -445,7 +445,9 @@ void MainWindow::SetupTouchInterface()
             popup->addMenu(action->menu());
     popup->addAction("Ir a canción…", this, [this] { JumpSong(); });
     for (auto *submenu : findChildren<QMenu *>())
-        submenu->setStyleSheet("QMenu::item { min-height: 48px; }");
+        // QMenu item sizing ignores min-height on Qt's Android style. Padding
+        // contributes to sizeFromContents and keeps real touch targets >=48px.
+        submenu->setStyleSheet("QMenu::item { padding: 16px 12px; }");
     menu->setMenu(popup);
     header->addWidget(menu);
     menuBar()->hide();

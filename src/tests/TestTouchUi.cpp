@@ -95,6 +95,10 @@ private slots:
         QCOMPARE(menu->menu()->actions().size(), 6); // folder + original four menus + Jump
         auto *folder = window.findChild<QAction *>("openGsfFolderAction");
         QVERIFY(folder && menu->menu()->actions().contains(folder));
+        menu->menu()->popup(menu->mapToGlobal(QPoint{}));
+        settle();
+        QVERIFY(menu->menu()->actionGeometry(folder).height() >= 48);
+        menu->menu()->close();
         disconnect(&window, &MainWindow::OpenGsfFolderRequested, nullptr, nullptr);
         QSignalSpy folderOpen(&window, &MainWindow::OpenGsfFolderRequested);
         folder->trigger();
