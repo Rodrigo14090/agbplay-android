@@ -2,6 +2,15 @@
 
 ## Menús Android y barra nativa (séptima entrega)
 
+[Descargar APK 1.0.6 ARM64 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39781877957/artifacts/12426209165)
+
+- Commit exacto compilado: `6e96c0630fc89288b914adba14c46b44d16f8081` (checkout push verificado).
+- SHA-256 del APK: `53c04c78b039ad5ed34903b893308004332de0ffdf84a006527c41a0aa922756`.
+- `org.agbplay.android`, `1.0.6-android-dev`, versionCode **7**; mínimo API 28, target API 35, compile SDK 36.
+- Firma APK v2 válida, un firmante; 17 bibliotecas AArch64 con LOAD alineados a 16 KiB.
+- [Workflow de la corrección](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39781877957).
+- [Capturas Android completas y estado de la corrección](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39781877957/artifacts/12427621867).
+
 El usuario confirmó que **1.0.5 sigue sin mostrar Abrir ROM/GSF ni Menú** en su
 teléfono. Se conserva ese resultado; pasar las pruebas Linux no significó que
 la desaparición estuviese corregida en Android.
@@ -17,10 +26,31 @@ todos los menús mediante el botón Menú, los paneles y el audio de 1.0.4.
 La corrección no cambia los tamaños de filas ni los remuestreadores.
 
 Se añadió una prueba con MainWindow real, Qt Android 6.11.2, emulador API 35,
-toques ADB y capturas de la pantalla Android completa. Se ejecuta primero sobre
-la interfaz de 1.0.5 y después sobre la corrección. Los resultados y el APK se
-registrarán al finalizar CI. Localmente: escritorio compilado y 6/6 CTest;
-el probe pasó comprobación sintáctica con Clang NDK ARM64. Sigue pendiente la
+toques ADB y capturas de la pantalla Android completa. La interfaz de 1.0.5
+(commit de prueba `6a09e444a945656c25d807d4f4b1e442a92348cb`) **reproduce el
+fallo**: Qt reporta ambos botones visibles y contenidos en sus ancestros, con
+centros físicos `(236,77)` y `(518,77)` en una ventana lógica de 384×853, pero
+el toque de Android no activa apertura (`openRequests=0`). La prueba falla por
+timeout; las pruebas Linux del mismo commit pasan.
+
+- [Workflow anterior que reproduce el fallo Android](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39781338813).
+- [Captura Android y estado anterior](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39781338813/artifacts/12425889656).
+
+La corrección **pasa los cuatro casos de entrada Android** sobre el mismo
+MainWindow y Qt 6.11.2: teléfono 576×1280 con densidad 240, el mismo tamaño con
+fuente 1,3×, horizontal 1280×576 y tablet 1600×1200 con densidad 160. En cada caso
+se exige que `getActionBar()` sea nulo, que el menú Qt no sea nativo, que los
+botones estén visibles y contenidos y que los toques ADB activen apertura y Menú.
+El reporte del probe se captura desde Android con screencap, no QWidget::grab.
+Los registros CI contienen cuatro líneas PASS para esas pulsaciones reales.
+
+El workflow completo de la corrección aprobó sus **seis trabajos**: motor normal
+5/5, motor ASan/UBSan/LeakSanitizer 5/5, GUI/motor Linux 6/6, copia Java 7/7 y
+SAF Android 5/5, interfaz Android en sus cuatro tamaños y APK ARM64 firmado.
+Localmente: escritorio compilado y 6/6 CTest; el probe pasó comprobación
+sintáctica con Clang NDK ARM64. El código del motor y del backend de audio no
+cambia respecto a 1.0.5. La ejecución de la interfaz Android fue en emulador
+x86_64; el APK entregado está compilado para ARM64. Sigue pendiente la
 comprobación en el teléfono físico del usuario.
 
 ## Apertura visible en vista móvil (sexta entrega)
