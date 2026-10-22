@@ -34,16 +34,22 @@ def wait_for(predicate, timeout=20):
 def capture(name):
     (OUT / f"{name}.png").write_bytes(adb("exec-out", "screencap", "-p"))
     (OUT / f"{name}.json").write_text(json.dumps(state(), indent=2))
+    (OUT / f"{name}-windows.txt").write_bytes(adb("shell", "dumpsys", "window"))
 
 
 def test(name, width, height, density, font_scale):
     adb("shell", "am", "force-stop", PACKAGE)
+    adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
+    adb("shell", "wm", "dismiss-keyguard")
     adb("shell", "wm", "size", f"{width}x{height}")
     adb("shell", "wm", "density", density)
     adb("shell", "settings", "put", "system", "font_scale", font_scale)
     adb("shell", "run-as", PACKAGE, "rm", "-f", "files/ui-probe.json")
     adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
-    current = wait_for(lambda s: s["windowWidth"] > 100 and s["windowHeight"] > 100)
+    # With background_running=true, a live Qt timer does not imply that Android
+    # is delivering input to this Activity. Wait for actual foreground readiness.
+    current = wait_for(lambda s: s["windowWidth"] > 100 and s["windowHeight"] > 100
+                       and s["applicationState"] == 4 and s["updatesEnabled"] and s["enabled"])
     time.sleep(1)  # Allow native bars/insets to settle before real input.
     current = state()
     capture(name)

@@ -63,6 +63,8 @@ int main(int argc, char **argv)
                                       {"x", qRound(center.x() * scale)}, {"y", qRound(center.y() * scale)},
                                       {"height", rect.height()}};
         const QJsonObject state{{"qt", qVersion()}, {"open", describe(open)}, {"menu", describe(menu)},
+                                {"applicationState", int(app.applicationState())},
+                                {"updatesEnabled", window.updatesEnabled()}, {"enabled", window.isEnabled()},
                                 {"folder", folderState}, {"folderRequests", folderRequests},
                                 {"nativeMenuBar", window.menuBar()->isNativeMenuBar()},
                                 {"actionBarChecked", actionBarChecked}, {"actionBarPresent", actionBarPresent},
