@@ -3,7 +3,7 @@
 #include "Version.hpp"
 
 #include <fmt/format.h>
-#include <QtVersion>
+#include <QtCore/qglobal.h>
 
 static const std::string figletText = []() {
     std::string t;

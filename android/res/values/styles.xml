@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Qt draws all application controls, including the touch menu. An
+         Activity ActionBar must never overlay the first Qt control row. -->
+    <style name="AgbplayTheme" parent="android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

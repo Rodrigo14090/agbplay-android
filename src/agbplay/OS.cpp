@@ -3,6 +3,7 @@
 #include "Xcept.hpp"
 
 #include <filesystem>
+#include <cstdlib>
 #include <iostream>
 
 #if defined(_WIN32)
@@ -56,6 +57,21 @@ const std::filesystem::path OS::GetGlobalConfigDirectory()
     return retval;
 }
 
+#elif defined(__ANDROID__)
+#include <QStandardPaths>
+void OS::LowerThreadPriority() {} // Android manages scheduling for app threads.
+const std::filesystem::path OS::GetMusicDirectory()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation).toStdString() + "/exports";
+}
+const std::filesystem::path OS::GetLocalConfigDirectory()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation).toStdString();
+}
+const std::filesystem::path OS::GetGlobalConfigDirectory()
+{
+    return GetLocalConfigDirectory();
+}
 #elif __has_include(<unistd.h>)
 // if we compile for a UNIX'oid
 
@@ -81,6 +97,8 @@ const std::filesystem::path OS::GetMusicDirectory()
 
 const std::filesystem::path OS::GetLocalConfigDirectory()
 {
+    if (const char *config = std::getenv("XDG_CONFIG_HOME"); config && std::filesystem::path(config).is_absolute())
+        return std::filesystem::path(config);
     passwd *pw = getpwuid(getuid());
     if (!pw)
         throw Xcept("getpwuid failed: %s", strerror(errno));

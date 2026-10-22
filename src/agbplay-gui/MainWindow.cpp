@@ -1,4 +1,13 @@
 #include "MainWindow.hpp"
+#include "AndroidPlayback.hpp"
+#include "DocumentAccess.hpp"
+#include "TouchPlayerLayout.hpp"
+#include <QToolButton>
+#include <QApplication>
+#include <QScroller>
+#include <QProgressDialog>
+#include <QSignalBlocker>
+#include <QScopedValueRollback>
 
 #include "AboutWindow.hpp"
 #include "Debug.hpp"
@@ -10,6 +19,9 @@
 #include "Rom.hpp"
 #include "SelectProfileDialog.hpp"
 #include "Settings.hpp"
+#include "OS.hpp"
+#include <QFile>
+#include <QDir>
 #include "SettingsWindow.hpp"
 #include "SoundExporter.hpp"
 
@@ -19,6 +31,7 @@
 #include <fstream>
 #include <QCloseEvent>
 #include <QDesktopServices>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -29,16 +42,39 @@
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QTextDocument>
 #include <QToolBar>
 #include <thread>
 #include <tuple>
+#include <utility>
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
+MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(parent)
 {
+    // Android's native menu integration can show an Activity ActionBar even
+    // after the QWidget menu bar is hidden. Keep all touch menus in Qt from
+    // the outset, before creating any platform menu handles.
+    if (touchInterface)
+        menuBar()->setNativeMenuBar(false);
     SetupMenuBar();
     SetupToolBar();
     SetupWidgets();
     SetupStatusBar();
+    if (touchInterface)
+        SetupTouchInterface();
+#ifdef Q_OS_ANDROID
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        // Keep the Qt control plane alive, but never paint a suspended surface.
+        for (auto *window : QApplication::topLevelWidgets())
+            window->setUpdatesEnabled(state == Qt::ApplicationActive);
+        statusUpdateTimer.setInterval(state == Qt::ApplicationActive ? 16 : 250);
+        if (state == Qt::ApplicationActive) QTimer::singleShot(0, this, [this] {
+            auto tasks = std::exchange(deferredUiTasks, {});
+            for (auto &task : tasks) RunWhenActive(std::move(task));
+        });
+        if (state != Qt::ApplicationActive && settings && settings->dirty)
+            settings->Save();
+    });
+#endif
 
     pm = std::make_unique<ProfileManager>();
     pm->LoadProfiles();
@@ -51,6 +87,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // Because we programmatically modify the slider above, the dirty flag is set.
     // Reset this, to avoid an unnecessary save.
     settings->dirty = false;
+
+#ifdef Q_OS_ANDROID
+    logWidget.document()->setMaximumBlockCount(2000);
+    androidPlayback = std::make_unique<AndroidPlayback>(this);
+    connect(androidPlayback.get(), &AndroidPlayback::command, this, &MainWindow::AndroidPlaybackCommand);
+    connect(androidPlayback.get(), &AndroidPlayback::error, this, [this](const QString &message) {
+        AndroidPlaybackCommand(AndroidPlayback::Stop);
+        LogAppend("Android playback service: " + message.toStdString());
+        statusBar()->showMessage(message);
+    });
+#endif
 
     connect(&statusUpdateTimer, &QTimer::timeout, this, &MainWindow::StatusUpdate);
     statusUpdateTimer.setTimerType(Qt::PreciseTimer);
@@ -86,6 +133,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
 MainWindow::~MainWindow()
 {
+#ifdef Q_OS_ANDROID
+    androidPlayback.reset(); // detach JNI before native player/UI destruction
+#endif
+    if (importCancelled) importCancelled->store(true);
+    if (importWorker.joinable()) importWorker.join();
+    // Release gesture registrations while their widget targets still exist.
+    for (auto *widget : findChildren<QWidget *>())
+        if (QScroller::hasScroller(widget))
+            QScroller::ungrabGesture(widget);
+    playbackEngine.reset();
+    if (exportThread && exportThread->joinable())
+        exportThread->join();
     Debug::set_callback(nullptr, nullptr);
 }
 
@@ -94,10 +153,18 @@ void MainWindow::SetupMenuBar()
     /* File */
     QMenu *fileMenu = menuBar()->addMenu("&File");
 
-    QAction *fileOpenRom = fileMenu->addAction("Open ROM/GSF");
-    fileOpenRom->setIcon(QIcon(":/icons/open-rom.ico"));
-    fileOpenRom->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_O));
-    connect(fileOpenRom, &QAction::triggered, [this](bool) { LoadGame(); });
+    openRomAction = fileMenu->addAction("Open ROM/GSF");
+    openRomAction->setObjectName("openRomAction");
+    openRomAction->setIcon(QIcon(":/icons/open-rom.ico"));
+    openRomAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_O));
+    connect(openRomAction, &QAction::triggered, this, &MainWindow::OpenRomRequested);
+    connect(this, &MainWindow::OpenRomRequested, this, &MainWindow::LoadGame);
+
+    openGsfFolderAction = fileMenu->addAction("Abrir carpeta GSF…");
+    openGsfFolderAction->setObjectName("openGsfFolderAction");
+    openGsfFolderAction->setIcon(QIcon(":/icons/open-rom.ico"));
+    connect(openGsfFolderAction, &QAction::triggered, this, &MainWindow::OpenGsfFolderRequested);
+    connect(this, &MainWindow::OpenGsfFolderRequested, this, &MainWindow::LoadGsfFolder);
 
     fileMenu->addSeparator();
 
@@ -142,6 +209,19 @@ void MainWindow::SetupMenuBar()
     benchmarkSelectedAction->setEnabled(false);
     connect(benchmarkSelectedAction, &QAction::triggered, [this](bool) { ExportAudio(true, false, false); });
 
+#ifdef Q_OS_ANDROID
+    auto *shareExport = fileMenu->addAction("Share Exported WAV");
+    connect(shareExport, &QAction::triggered, this, [this] {
+        if (exportBusy) { ExportStillInProgress(); return; }
+        QDir directory(QString::fromStdString(OS::GetMusicDirectory().string()));
+        const auto files = directory.entryList({"*.wav"}, QDir::Files, QDir::Time);
+        if (files.isEmpty()) { MBoxInfo("Export", "No WAV exports yet."); return; }
+        bool ok = false;
+        const auto file = QInputDialog::getItem(this, "Share Export", "WAV file:", files, 0, false, &ok);
+        if (ok && !DocumentAccess::ShareFile(directory.absoluteFilePath(file)))
+            MBoxError("Share Export", "Android could not share the selected export.");
+    });
+#endif
     fileMenu->addSeparator();
 
     QAction *fileQuit = fileMenu->addAction("Quit");
@@ -352,6 +432,121 @@ void MainWindow::SetupWidgets()
     centralWidget()->show();
 }
 
+void MainWindow::SetupTouchInterface()
+{
+    for (auto *toolbar : findChildren<QToolBar *>()) {
+        // Release QWidgetActions before moving their widgets; otherwise the
+        // toolbar continues managing their visibility and geometry.
+        for (auto *action : toolbar->actions())
+            toolbar->removeAction(action);
+        toolbar->hide();
+    }
+    auto *controls = new TouchControlRows(this);
+    controls->setObjectName("touchControls");
+    auto *headerRow = new QWidget(controls);
+    headerRow->setObjectName("touchOpeningRow");
+    auto *transportRow = new QWidget(controls);
+    auto *levelsRow = new QWidget(controls);
+    auto *header = new QHBoxLayout(headerRow);
+    header->setContentsMargins(0, 0, 0, 0);
+    auto *open = new QPushButton(QIcon(":/icons/open-rom.ico"), "Abrir ROM/GSF", headerRow);
+    open->setObjectName("openRomButton");
+    open->setAccessibleName("Abrir ROM/GSF");
+    open->setMinimumHeight(48);
+    connect(open, &QPushButton::clicked, openRomAction, &QAction::trigger);
+    header->addWidget(open, 1);
+    auto *menu = new QToolButton(headerRow);
+    menu->setObjectName("touchMenuButton");
+    menu->setText("Menú");
+    menu->setAccessibleName("Menú de agbplay");
+    menu->setMinimumSize(64, 48);
+    menu->setPopupMode(QToolButton::InstantPopup);
+    auto *popup = new QMenu(menu);
+    // A direct entry in the touch menu; no additional cramped control row.
+    popup->addAction(openGsfFolderAction);
+    for (auto *action : menuBar()->actions())
+        if (action->menu())
+            popup->addMenu(action->menu());
+    popup->addAction("Ir a canción…", this, [this] { JumpSong(); });
+    for (auto *submenu : findChildren<QMenu *>())
+        // QMenu item sizing ignores min-height on Qt's Android style. Padding
+        // contributes to sizeFromContents and keeps real touch targets >=48px.
+        submenu->setStyleSheet("QMenu::item { padding: 16px 12px; }");
+    menu->setMenu(popup);
+    header->addWidget(menu);
+    menuBar()->hide();
+
+    auto *transport = new QHBoxLayout(transportRow);
+    transport->setContentsMargins(0, 0, 0, 0);
+    transport->setSpacing(4);
+    const std::array<QPushButton *, 5> buttons{&prevButton, &stopButton, &playButton, &pauseButton, &nextButton};
+    const std::array<QString, 5> names{"Anterior", "Detener", "Reproducir", "Pausa", "Siguiente"};
+    for (size_t i = 0; i < buttons.size(); ++i) {
+        auto *button = buttons[i];
+        button->setMaximumSize(QWIDGETSIZE_MAX, 48);
+        button->setMinimumSize(48, 48);
+        button->setToolTip(names[i]);
+        button->setAccessibleName(names[i]);
+        transport->addWidget(button, 1);
+        button->show();
+    }
+    auto *levels = new QHBoxLayout(levelsRow);
+    levels->setContentsMargins(0, 0, 0, 0);
+    for (auto *button : {&speedHalveButton, &speedDoubleButton}) {
+        button->setFixedSize(48, 48);
+        button->setText(button == &speedHalveButton ? "½×" : "2×");
+        button->setIcon(QIcon());
+        button->setAccessibleName(button == &speedHalveButton ? "Reducir velocidad" : "Aumentar velocidad");
+        levels->addWidget(button);
+        button->show();
+    }
+    volumeSlider.setMinimumSize(80, 48);
+    volumeSlider.setMaximumSize(QWIDGETSIZE_MAX, 48);
+    volumeSlider.setAccessibleName("Volumen");
+    auto *volume = new QLabel(levelsRow);
+    volume->setMinimumWidth(32);
+    connect(&volumeSlider, &QSlider::valueChanged, volume, [volume](int value) { volume->setText(QString::number(value)); });
+    volume->setText(QString::number(volumeSlider.value()));
+    levels->addWidget(&volumeSlider, 1);
+    volumeSlider.show();
+    levels->addWidget(volume);
+    controls->setRows({headerRow, transportRow, levelsRow});
+    // A heap-owned wrapper outlives all MainWindow value-member controls.
+    // Do not parent vuMeter to statusWidget: statusWidget is destroyed first.
+    auto *tracksPage = new QWidget(this);
+    auto *tracksLayout = new QVBoxLayout(tracksPage);
+    tracksLayout->setContentsMargins(0, 0, 0, 0);
+    tracksLayout->addWidget(&vuMeter, 0, Qt::AlignHCenter);
+    vuMeter.show();
+    tracksLayout->addWidget(&statusWidgetScrollArea, 1);
+    statusWidget.songWidget.setTouchLayout();
+    for (auto *track : statusWidget.findChildren<TrackWidget *>())
+        track->setTouchLayout();
+    statusWidgetScrollArea.setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    QScroller::grabGesture(statusWidgetScrollArea.viewport(), QScroller::TouchGesture);
+    for (auto *list : {&songlistWidget, &playlistWidget}) {
+        list->EnableTouchInterface();
+        // Activated is supplied by a single tap by Android's item view style.
+        // clicked is explicit here for consistent behaviour across Qt styles.
+        connect(&list->listWidget, &QAbstractItemView::clicked, this, [this, list](const QModelIndex &index) {
+            if (list == &songlistWidget) SonglistSwitchSong(index.row());
+            else PlaylistSwitchSong(index.row());
+        });
+    }
+    auto *infoScroll = new QScrollArea(this);
+    infoWidget.setMaximumWidth(QWIDGETSIZE_MAX);
+    infoScroll->setWidgetResizable(true);
+    infoScroll->setWidget(&infoWidget);
+    QScroller::grabGesture(infoScroll->viewport(), QScroller::TouchGesture);
+    QScroller::grabGesture(logWidget.viewport(), QScroller::TouchGesture);
+    auto *oldCentral = takeCentralWidget();
+    oldCentral->setParent(this);
+    oldCentral->hide();
+    auto *touch = new TouchPlayerLayout({&songlistWidget, &playlistWidget, tracksPage, infoScroll, &logWidget}, controls, this);
+    setCentralWidget(touch);
+    statusBar()->setSizeGripEnabled(false);
+}
+
 void MainWindow::SetupStatusBar()
 {
     statusBar()->showMessage("No game loaded");
@@ -372,7 +567,13 @@ void MainWindow::Play()
         return;
     }
 
+#ifdef Q_OS_ANDROID
+    if (!platformCommand) { androidPlayback->play(statusWidget.songWidget.titleLabel.text()); return; }
+#endif
     playbackEngine->Play();
+#ifdef Q_OS_ANDROID
+    if (outputSuspended) { playbackEngine->SuspendOutput(false); outputSuspended = false; }
+#endif
     playing = true;
 
     if (playlistFocus)
@@ -392,7 +593,16 @@ void MainWindow::Pause()
         return;
     }
 
+#ifdef Q_OS_ANDROID
+    if (!platformCommand) {
+        if (playing) androidPlayback->pause(); else Play();
+        return;
+    }
+    if (!outputSuspended) { playbackEngine->SuspendOutput(true); outputSuspended = true; }
+    if (playing) playing = playbackEngine->Pause();
+#else
     playing = playbackEngine->Pause();
+#endif
 
     playButton.setChecked(playing);
     stopButton.setChecked(false);
@@ -401,12 +611,21 @@ void MainWindow::Pause()
 
 void MainWindow::Stop()
 {
+#ifdef Q_OS_ANDROID
+    if (androidPlayback) androidPlayback->stop();
+#endif
     if (!playbackEngine) {
         stopButton.setChecked(true);
         return;
     }
 
+#ifdef Q_OS_ANDROID
+    if (!outputSuspended) { playbackEngine->SuspendOutput(true); outputSuspended = true; }
+#endif
     playbackEngine->Stop();
+#ifdef Q_OS_ANDROID
+    playbackEngine->DiscardBufferedAudio();
+#endif
     playing = false;
 
     if (playlistFocus)
@@ -418,6 +637,25 @@ void MainWindow::Stop()
     stopButton.setChecked(true);
     pauseButton.setChecked(false);
 }
+
+#ifdef Q_OS_ANDROID
+void MainWindow::AndroidPlaybackCommand(int command)
+{
+    QScopedValueRollback guard(platformCommand, true);
+    if (!playbackEngine) { androidPlayback->stop(); return; }
+    switch (command) {
+    case AndroidPlayback::Play: Play(); break;
+    case AndroidPlayback::Pause: Pause(); break;
+    case AndroidPlayback::Stop: Stop(); break;
+    case AndroidPlayback::Next: AdvanceSong(1); break;
+    case AndroidPlayback::Previous: AdvanceSong(-1); break;
+    case AndroidPlayback::Failed:
+        Stop();
+        LogAppend("Android audio focus was not granted; playback remains stopped.");
+        break;
+    }
+}
+#endif
 
 void MainWindow::AdvanceSong(int indexDelta)
 {
@@ -494,7 +732,13 @@ void MainWindow::LoadSong(const std::string &title, uint16_t id)
         return;
 
     playbackEngine->LoadSong(id);
+#ifdef Q_OS_ANDROID
+    if (outputSuspended) playbackEngine->DiscardBufferedAudio();
+#endif
     statusWidget.songWidget.titleLabel.setText(QString::fromStdString(fmt::format("{} - {}", id, title)));
+#ifdef Q_OS_ANDROID
+    androidPlayback->title(statusWidget.songWidget.titleLabel.text());
+#endif
 
     if (playlistFocus) {
         songlistWidget.SetPlayState(false);
@@ -569,84 +813,114 @@ void MainWindow::PlaylistSwitchSong(int row)
     Play();
 }
 
+void MainWindow::RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task)
+{
+    if (importBusy) return;
+    if (importWorker.joinable()) importWorker.join();
+    importBusy = true;
+    importCancelled = std::make_shared<std::atomic<bool>>(false);
+    const auto cancelled = importCancelled;
+    importProgress = new QProgressDialog("Importando documentos…", "Cancelar", 0, 0, this);
+    importProgress->setWindowModality(Qt::WindowModal);
+    importProgress->setMinimumDuration(0);
+    connect(importProgress, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
+    importProgress->show();
+    importWorker = std::thread([this, task = std::move(task), cancelled] {
+        std::function<void()> finish;
+        QString error;
+        try { finish = task([cancelled] { return cancelled->load(); }); }
+        catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
+        QMetaObject::invokeMethod(this, [this, finish = std::move(finish), error, cancelled]() mutable {
+            RunWhenActive([this, finish = std::move(finish), error, cancelled] {
+            importBusy = false;
+            disconnect(importProgress, nullptr, this, nullptr);
+            importProgress->close();
+            importProgress->deleteLater();
+            importProgress = nullptr;
+            if (cancelled->load()) return;
+            if (!error.isEmpty()) { MBoxError("Document import", error.toStdString()); return; }
+            try { if (finish) finish(); }
+            catch (const std::exception &e) { MBoxError("Document import", e.what()); }
+            });
+        }, Qt::QueuedConnection);
+    });
+}
+
+void MainWindow::RunWhenActive(std::function<void()> task)
+{
+#ifdef Q_OS_ANDROID
+    if (qApp->applicationState() != Qt::ApplicationActive) {
+        deferredUiTasks.push_back(std::move(task));
+        return;
+    }
+#endif
+    task();
+}
+
+void MainWindow::ImportGsfPaths(const std::vector<std::filesystem::path> &paths)
+{
+    if (!profile) return;
+    const auto library = Rom::Instance().IsGsf() ? Rom::Instance().GsfPath() : std::filesystem::path{};
+    const auto count = profile->songTableInfoPlayback.count;
+    const auto session = profile->sessionId;
+    RunImport([this, paths, library, count, session](const std::function<bool()> &cancelled) {
+        auto songs = Gsf::ReadPlaylist(paths, library, count, cancelled);
+        return [this, songs = std::move(songs), session] {
+            if (!profile || profile->sessionId != session) return;
+            if (songs.empty()) { MBoxInfo("GSF playlist", "No MINIGSF files were found in the selected documents."); return; }
+            ApplyGsfPlaylist(songs, false);
+        };
+    });
+}
+
+void MainWindow::ApplyGsfPlaylist(const std::vector<Gsf::Song> &songs, bool replaceWithoutPrompt)
+{
+    const bool replace = replaceWithoutPrompt || (playlistWidget.listWidget.count() > 0 &&
+        QMessageBox::question(this, "GSF playlist", "Keep the current songs before adding the imported playlist?",
+                              QMessageBox::Yes | QMessageBox::No) == QMessageBox::No);
+    const QSignalBlocker blocker(&playlistWidget);
+    playlistWidget.setUpdatesEnabled(false);
+    if (replace) playlistWidget.Clear();
+    for (const auto &song : songs) playlistWidget.AddSong(song.title, song.id);
+    playlistWidget.setUpdatesEnabled(true);
+    profile->dirty = true;
+    saveButton.setEnabled(true);
+    saveProfileAction->setEnabled(true);
+}
+
 void MainWindow::ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath)
 {
-    if (!profile)
+    if (!profile || importBusy) return;
+    if (FileReader::cmpPathExt(gameFilePath, "zip")) { ImportGsfPaths({gameFilePath}); return; }
+#ifndef Q_OS_ANDROID
+    if (!gameFilePath.empty()) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto &entry : std::filesystem::directory_iterator(gameFilePath.parent_path()))
+            if (entry.is_regular_file() && FileReader::cmpPathExt(entry.path(), "minigsf")) paths.push_back(entry.path());
+        ImportGsfPaths(paths);
         return;
-
-    QFileDialog fileDialog(this);
-    fileDialog.setFileMode(QFileDialog::ExistingFiles);
-    fileDialog.setNameFilter("MINIGSF files (*.minigsf *.zip)");
-
-    std::vector<std::filesystem::path> pathsToLoad;
-
-    auto miniGsfFilterFunc = [](const std::filesystem::path &p) { return FileReader::cmpPathExt(p, "minigsf"); };
-
-    if (gameFilePath.empty()) {
-        /* If no path is passed, ask the user to specify them interactively */
-        if (!fileDialog.exec())
-            return;
-        for (int i = 0; i < fileDialog.selectedFiles().size(); i++)
-            pathsToLoad.emplace_back(fileDialog.selectedFiles().at(i).toStdWString());
-    } else {
-        if (FileReader::cmpPathExt(gameFilePath, "gsflib")) {
-            /* Main file loaded from raw file -> load minigsfs from same folder */
-            for (const auto &dirEnt : std::filesystem::directory_iterator(gameFilePath.parent_path())) {
-                if (!dirEnt.is_regular_file())
-                    continue;
-                if (miniGsfFilterFunc(dirEnt.path()))
-                    pathsToLoad.emplace_back(dirEnt.path());
-            }
-        } else if (FileReader::cmpPathExt(gameFilePath, "zip")) {
-            /* Main file loaded from zip file -> load minigsfs from same zip file */
-            pathsToLoad.emplace_back(gameFilePath);
-        } else {
-            throw std::logic_error(
-                "This case should not occur. Attempting to load MINIGSFs from invalid main file extension."
-            );
+    }
+#endif
+    QFileDialog dialog(this);
+    dialog.setWindowTitle("Seleccionar MINIGSF asociados o ZIP");
+    dialog.setFileMode(QFileDialog::ExistingFiles);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+#ifdef Q_OS_ANDROID
+    dialog.setOption(QFileDialog::DontUseNativeDialog, false);
+    dialog.setNameFilter("MINIGSF/ZIP (*);;MINIGSF (*.minigsf);;ZIP (*.zip)");
+#else
+    dialog.setNameFilter("MINIGSF/ZIP (*.minigsf *.zip)");
+#endif
+    if (!dialog.exec() || dialog.selectedUrls().isEmpty()) return;
+    const auto urls = dialog.selectedUrls();
+    RunImport([this, urls](const std::function<bool()> &cancelled) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto &url : urls) {
+            if (cancelled()) return std::function<void()>{};
+            paths.push_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
         }
-    }
-
-    /* Store all songs together with their original file name (for sorting later) */
-    std::vector<std::tuple<std::filesystem::path, std::string, uint16_t>> songs;
-
-    auto op = [&songs](const std::filesystem::path &p, FileReader &fileReader) {
-        std::string title;
-        uint16_t id;
-        std::vector<uint8_t> gsfData(fileReader.size());
-        fileReader.read(gsfData);
-        Gsf::GetSongInfo(gsfData, title, id);
-        songs.emplace_back(p, std::move(title), id);
-        return true;
-    };
-
-    /* FileReader::forEachIn will run 'op' if 'miniGsfFilterFunc' returns true
-     * for a specific path. In our case 'op' will populate our song list to load. */
-    for (const std::filesystem::path &p : pathsToLoad)
-        FileReader::forEachInZipOrRaw(p, miniGsfFilterFunc, op);
-
-    /* Playlist order may be random, so sort by filename like normal for MINIGSFs. */
-    auto pathCmp = [](const auto &ta, const auto &tb) { return std::get<0>(ta).stem() < std::get<0>(tb).stem(); };
-    std::sort(songs.begin(), songs.end(), pathCmp);
-
-    /* Ask the user to replace all current songs if there are any */
-    if (playlistWidget.listWidget.count() > 0) {
-        const QString title = "Overwrite exiting playlist?";
-        QString message = "The playlist of the current profile already contains songs. ";
-        message += "Do you want to keep the current songs in the playlist before import?";
-        QMessageBox mbox(QMessageBox::Icon::Question, title, message, QMessageBox::Yes | QMessageBox::No, this);
-        if (mbox.exec() == QMessageBox::No)
-            playlistWidget.listWidget.clear();
-    }
-
-    for (auto &[_, title, id] : songs)
-        playlistWidget.AddSong(title, id);
-
-    if (songs.size() > 0) {
-        profile->dirty = true;
-        saveButton.setEnabled(true);
-        saveProfileAction->setEnabled(true);
-    }
+        return std::function<void()>([this, paths = std::move(paths)] { ImportGsfPaths(paths); });
+    });
 }
 
 bool MainWindow::AskGameCodeAndUpdateProfile()
@@ -709,8 +983,17 @@ bool MainWindow::AskGameCodeAndUpdateProfile()
 void MainWindow::LoadGame()
 {
     QFileDialog fileDialog(this);
-    fileDialog.setFileMode(QFileDialog::ExistingFile);
-    fileDialog.setNameFilter("GBA-ROMs (*.gba *.zip);;GSF-Lib (*.gsflib *.zip)");
+    fileDialog.setFileMode(QFileDialog::ExistingFiles);
+    fileDialog.setAcceptMode(QFileDialog::AcceptOpen);
+    fileDialog.setWindowTitle("Abrir ROM/GSF y MINIGSF asociados");
+#ifdef Q_OS_ANDROID
+    // Qt's Android platform plugin maps ExistingFile + AcceptOpen to SAF's
+    // ACTION_OPEN_DOCUMENT. Unknown GBA/GSF MIME types must remain selectable.
+    fileDialog.setOption(QFileDialog::DontUseNativeDialog, false);
+    fileDialog.setNameFilter("ROM/GSF/ZIP (*);;GBA (*.gba);;GSF (*.gsflib *.gsf *.minigsf);;ZIP (*.zip)");
+#else
+    fileDialog.setNameFilter("GBA-ROMs (*.gba *.zip);;GSF-Lib (*.gsflib *.gsf *.zip)");
+#endif
 
     if (!settings->lastOpenFileDirectory.empty())
         fileDialog.setDirectory(QString::fromStdWString(settings->lastOpenFileDirectory.wstring()));
@@ -718,12 +1001,105 @@ void MainWindow::LoadGame()
     if (!fileDialog.exec())
         return;
 
+    if (fileDialog.selectedUrls().isEmpty() || importBusy) return;
+    const auto urls = fileDialog.selectedUrls();
+    RunImport([this, urls](const std::function<bool()> &cancelled) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto &url : urls) {
+            if (cancelled()) return std::function<void()>{};
+            paths.push_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
+        }
+        return std::function<void()>([this, paths = std::move(paths)] { OpenDocuments(paths); });
+    });
+}
+
+void MainWindow::LoadGsfFolder()
+{
+    if (importBusy) return;
+    QFileDialog dialog(this);
+    dialog.setWindowTitle("Seleccionar carpeta del OST GSF");
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setOption(QFileDialog::ShowDirsOnly, true);
+#ifdef Q_OS_ANDROID
+    // Qt maps this mode to ACTION_OPEN_DOCUMENT_TREE, including its URI grant.
+    dialog.setOption(QFileDialog::DontUseNativeDialog, false);
+#endif
+    if (dialog.exec() && !dialog.selectedUrls().isEmpty())
+        OpenGsfFolder(dialog.selectedUrls().front().toString(QUrl::FullyEncoded));
+}
+
+void MainWindow::OpenGsfFolder(const QString &directory)
+{
+    RunImport([this, directory](const std::function<bool()> &cancelled) {
+        auto documents = DocumentAccess::ListGsfFolder(directory);
+        if (cancelled()) return std::function<void()>{};
+        return std::function<void()>([this, documents = std::move(documents)] {
+            std::vector<size_t> libraries;
+            QStringList names;
+            for (size_t i = 0; i < documents.size(); ++i) {
+                if (documents[i].name.endsWith(".gsflib", Qt::CaseInsensitive) ||
+                    documents[i].name.endsWith(".gsf", Qt::CaseInsensitive)) {
+                    if (names.contains(documents[i].name, Qt::CaseInsensitive)) {
+                        MBoxError("Carpeta GSF", "Several libraries have the same filename. Their MINIGSF _lib tags cannot distinguish them; use separate OST folders.");
+                        return;
+                    }
+                    libraries.push_back(i);
+                    names.push_back(documents[i].name);
+                }
+            }
+            if (libraries.empty()) {
+                MBoxError("Carpeta GSF", "No GSFLIB was found. Select the OST folder containing the GSFLIB and MINIGSF files directly, not its parent folder.");
+                return;
+            }
+            size_t library = libraries.front();
+            if (libraries.size() > 1) {
+                bool ok = false;
+                const auto name = QInputDialog::getItem(this, "Carpeta GSF",
+                    "Hay varias bibliotecas. ¿Qué conjunto deseas abrir?", names, 0, false, &ok);
+                if (!ok) return;
+                library = libraries.at(static_cast<size_t>(names.indexOf(name)));
+            }
+            ImportGsfFolder(documents, library);
+        });
+    });
+}
+
+void MainWindow::ImportGsfFolder(const std::vector<DocumentAccess::FolderDocument> &documents, size_t library)
+{
+    RunImport([this, documents, library](const std::function<bool()> &cancelled) {
+        if (cancelled()) return std::function<void()>{};
+        const auto &chosen = documents.at(library);
+        const auto lib = DocumentAccess::LocalCopy(chosen.uri, chosen.name);
+        std::vector<std::filesystem::path> minis;
+        for (const auto &document : documents) {
+            if (cancelled()) return std::function<void()>{};
+            if (document.name.endsWith(".minigsf", Qt::CaseInsensitive))
+                minis.push_back(DocumentAccess::LocalCopy(document.uri, document.name));
+        }
+        // Fully parse before closing the current game; never publish a partial
+        // import. Ignore only valid selectors associated with another library.
+        auto songs = Gsf::ReadPlaylist(minis, lib, UINT16_MAX, cancelled, true);
+        return std::function<void()>([this, lib, songs = std::move(songs)] {
+            OpenDocuments({lib}, &songs);
+        });
+    });
+}
+
+void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths,
+                               const std::vector<Gsf::Song> *automaticPlaylist)
+{
+    std::vector<std::filesystem::path> libraries, minis;
+    for (const auto &path : paths)
+        (FileReader::cmpPathExt(path, "minigsf") ? minis : libraries).push_back(path);
+    if (libraries.empty() && profile) { ImportGsfPaths(minis); return; }
+    if (libraries.size() != 1) {
+        MBoxError("Open documents", "Select one GBA/GSFLIB/ZIP and optionally its MINIGSF files. A MINIGSF alone needs an already loaded library.");
+        return;
+    }
+    const auto selectedFile = libraries.front();
+    // A provider/read failure must leave the current game and playlist intact.
     if (!CloseGame())
         return;
-
-    assert(fileDialog.selectedFiles().size() == 1);
-    const std::filesystem::path selectedFile = fileDialog.selectedFiles().at(0).toStdWString();
-
     std::vector<std::shared_ptr<Profile>> profileCandidates;
 
     /* Load ROM and find matching profiles. GetProfiles creates a new profile if the scanner
@@ -731,7 +1107,7 @@ void MainWindow::LoadGame()
     try {
         Rom::CreateInstance(selectedFile);
         profileCandidates = pm->GetProfiles(Rom::Instance());
-    } catch (Xcept &e) {
+    } catch (const std::exception &e) {
         MBoxError("Load Error", e.what());
         return;
     }
@@ -762,6 +1138,18 @@ void MainWindow::LoadGame()
         }
     }
 
+    if (automaticPlaylist) {
+        for (const auto &song : *automaticPlaylist) {
+            if (song.id >= profile->songTableInfoPlayback.count) {
+                MBoxError("GSF playlist", fmt::format("MINIGSF '{}' selects song {}, outside the detected song table ({})",
+                    song.filename.string(), song.id, profile->songTableInfoPlayback.count));
+                profile->dirty = false;
+                CloseGame();
+                return;
+            }
+        }
+    }
+
     for (uint16_t i = 0; i < profile->songTableInfoPlayback.count; i++) {
         auto songName = fmt::format("{:04}", i);
         songlistWidget.AddSong(songName, i);
@@ -777,16 +1165,6 @@ void MainWindow::LoadGame()
     saveButton.setEnabled(false);
     saveProfileAction->setEnabled(false);
 
-    if (Rom::Instance().IsGsf() && profile->playlist.size() == 0) {
-        const QString title = "Load Playlist from GSF set?";
-        QString message = "You just loaded a GSF set. ";
-        message += "The current profile does not contain any songs in the playlist.\n\n";
-        message += "Do you want to import the playlist from the accompanying MINIGSFs?";
-        QMessageBox mbox(QMessageBox::Icon::Question, title, message, QMessageBox::Yes | QMessageBox::No, this);
-        if (mbox.exec() == QMessageBox::Yes)
-            ProfileImportGsfPlaylist(selectedFile);
-    }
-
     infoWidget.romNameLineEdit.setText(QString::fromStdString(Rom::Instance().ReadString(0xA0, 12)));
     infoWidget.romCodeLineEdit.setText(QString::fromStdString(Rom::Instance().GetROMCode()));
     infoWidget.songTableLineEdit.setText(
@@ -796,7 +1174,23 @@ void MainWindow::LoadGame()
 
     UpdateSoundMode();
 
-    playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile);
+    if (Rom::Instance().IsGsf()) {
+        const auto inactive = std::count_if(profile->playerTablePlayback.begin(), profile->playerTablePlayback.end(),
+            [](const auto &player) { return player.maxTracks == 0; });
+        LogAppend(fmt::format("GSF profile: scanned players={}, configured players={}, playback players={}, inactive zero-track slots={}",
+            profile->playerTableScanned.size(), profile->playerTableConfig.size(), profile->playerTablePlayback.size(), inactive));
+    }
+    try {
+        playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile);
+    } catch (const std::exception &e) {
+        MBoxError("Audio initialization", e.what());
+        CloseGame();
+        return;
+    }
+#ifdef Q_OS_ANDROID
+    playbackEngine->SuspendOutput(true);
+    outputSuspended = true;
+#endif
     visualizerState = std::make_unique<MP2KVisualizerState>();
 
     playbackEngine->SetOutputNumBuffers(settings->playbackOutputNumBuffers);
@@ -809,6 +1203,27 @@ void MainWindow::LoadGame()
     benchmarkSelectedAction->setEnabled(true);
     profileSettings->setEnabled(true);
     profileMinigsfImport->setEnabled(true);
+
+    if (automaticPlaylist) {
+        if (!automaticPlaylist->empty()) {
+            ApplyGsfPlaylist(*automaticPlaylist, true);
+            playlistFocus = true;
+            playlistWidget.listWidget.setCurrentRow(0);
+            if (auto *tabs = findChild<QTabWidget *>("compactNavigation"); tabs && tabs->isVisible())
+                tabs->setCurrentIndex(1);
+        }
+        LogAppend(fmt::format("GSF folder: imported {} associated MINIGSF songs", automaticPlaylist->size()));
+    } else if (Rom::Instance().IsGsf() && profile->playlist.size() == 0) {
+        const QString title = "Load Playlist from GSF set?";
+        QString message = "You just loaded a GSF set. ";
+        message += "The current profile does not contain any songs in the playlist.\n\n";
+        message += "Do you want to import the playlist from the accompanying MINIGSFs?";
+        QMessageBox mbox(QMessageBox::Icon::Question, title, message, QMessageBox::Yes | QMessageBox::No, this);
+        if (mbox.exec() == QMessageBox::Yes) {
+            if (!minis.empty()) ImportGsfPaths(minis);
+            else ProfileImportGsfPlaylist(selectedFile);
+        }
+    }
 
     if (settings->lastOpenFileDirectory != selectedFile.parent_path()) {
         settings->lastOpenFileDirectory = selectedFile.parent_path();
@@ -874,6 +1289,13 @@ void MainWindow::ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick
     fileDialog.setDirectory(QString::fromStdWString(settings->exportQuickExportDirectory.wstring()));
 
     std::filesystem::path directory;
+#ifdef Q_OS_ANDROID
+    // Native directory picker returns a SAF tree URI, which libsndfile cannot open.
+    // Render privately; the Share Export action grants access to a selected WAV.
+    directory = OS::GetMusicDirectory();
+    if (!benchmarkOnly)
+        LogAppend("Export directory: " + directory.string());
+#else
     if (benchmarkOnly) {
         directory.clear();
     } else if (quick && !settings->exportQuickExportAsk) {
@@ -882,9 +1304,12 @@ void MainWindow::ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick
         if (!fileDialog.exec())
             return;
 
-        assert(fileDialog.selectedFiles().size() == 1);
+        if (fileDialog.selectedFiles().size() != 1)
+        return;
         directory = fileDialog.selectedFiles().at(0).toStdWString();
     }
+
+#endif
 
     /* Make a Profile copy for use in export thread.
      * That way we do not overwrite it while exporting. */
@@ -978,16 +1403,14 @@ void MainWindow::SaveLog()
     if (!fileDialog.exec())
         return;
 
-    assert(fileDialog.selectedFiles().size() == 1);
-
-    const std::filesystem::path selectedFile = fileDialog.selectedFiles().at(0).toStdWString();
-    std::ofstream fileStream(selectedFile);
-    if (!fileStream.is_open()) {
-        MBoxError("Save log file failed", fmt::format("Failed to save file: {}", strerror(errno)));
+    if (fileDialog.selectedFiles().size() != 1)
         return;
-    }
 
-    fileStream << logWidget.toPlainText().toStdString();
+    QFile output(fileDialog.selectedFiles().at(0));
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        output.write(logWidget.toPlainText().toUtf8()) < 0) {
+        MBoxError("Save log file failed", output.errorString().toStdString());
+    }
 }
 
 void MainWindow::SaveProfile()
@@ -1044,18 +1467,22 @@ int MainWindow::AskSaveProfile()
 
 void MainWindow::MBoxInfo(const std::string &title, const std::string &msg)
 {
+    RunWhenActive([this, title, msg] {
     const QString qtitle = QString::fromStdString(title);
     const QString qmsg = QString::fromStdString(msg);
     QMessageBox mbox(QMessageBox::Icon::Information, qtitle, qmsg, QMessageBox::Ok, this);
     mbox.exec();
+    });
 }
 
 void MainWindow::MBoxError(const std::string &title, const std::string &msg)
 {
+    RunWhenActive([this, title, msg] {
     const QString qtitle = QString::fromStdString(title);
     const QString qmsg = QString::fromStdString(msg);
     QMessageBox mbox(QMessageBox::Icon::Critical, qtitle, qmsg, QMessageBox::Ok, this);
     mbox.exec();
+    });
 }
 
 float MainWindow::ConvertSliderVolume(int value)
@@ -1104,9 +1531,67 @@ void MainWindow::UpdateMute(size_t trackNo, bool audible, bool visualOnly)
 
 void MainWindow::StatusUpdate()
 {
+    if (playbackEngine) {
+#ifdef Q_OS_ANDROID
+        static auto lastAudioReport = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastAudioReport >= std::chrono::seconds(5)) {
+            const auto d = playbackEngine->TakeAudioDiagnostics();
+            Debug::print("Android audio ({}s): underrun callbacks={}, missing frames={}, "
+                         "queue before callback min/max={}/{}, producer peak={}, target/low={}/{} frames "
+                         "({:.2f}/{:.2f} ms), synthesis block={} frames",
+                         d.elapsedSeconds, d.queue.underrunCallbacks, d.queue.underrunFrames,
+                         d.queue.minQueued, d.queue.maxQueued, d.queue.maxStored,
+                         d.targetFrames, d.lowWatermarkFrames,
+                         1000.0 * static_cast<double>(d.targetFrames) / d.sampleRate,
+                         1000.0 * static_cast<double>(d.lowWatermarkFrames) / d.sampleRate,
+                         d.synthesisBlockFrames);
+            Debug::print("Android timing: callbacks={}..{} frames, {:.2f} Hz / {:.0f} frames/s, "
+                         "produced={}, max synth={:.3f} ms, visualizer={:.3f} ms, producer work={:.3f} ms, "
+                         "producer gap={:.3f} ms, wake lateness={:.3f} ms, callback interval={:.3f} ms, callback={:.3f} ms",
+                         d.minCallbackFrames, d.maxCallbackFrames,
+                         d.elapsedSeconds > 0 ? static_cast<double>(d.callbackCount) / d.elapsedSeconds : 0.0,
+                         d.elapsedSeconds > 0 ? static_cast<double>(d.requestedFrames) / d.elapsedSeconds : 0.0,
+                         d.producedFrames,
+                         static_cast<double>(d.maxSynthesisNs) / 1.0e6,
+                         static_cast<double>(d.maxVisualizerNs) / 1.0e6,
+                         static_cast<double>(d.maxProducerWorkNs) / 1.0e6,
+                         static_cast<double>(d.maxProducerGapNs) / 1.0e6,
+                         static_cast<double>(d.maxWakeLatenessNs) / 1.0e6,
+                         static_cast<double>(d.maxCallbackIntervalNs) / 1.0e6,
+                         static_cast<double>(d.maxCallbackNs) / 1.0e6);
+            Debug::print("Android PCM: output RMS/peak={:.6f}/{:.6f}, clipped/nonfinite samples={}/{}, "
+                         "metered samples={}, telemetry dropped frames={}",
+                         d.outputRms, d.outputPeak, d.clippedSamples, d.nonFiniteSamples,
+                         d.meteredSamples, d.meterDroppedFrames);
+            lastAudioReport = now;
+        }
+#endif
+        const auto error = playbackEngine->TakeError();
+        if (!error.empty()) {
+#ifdef Q_OS_ANDROID
+            Stop();
+#endif
+            playing = false;
+            playButton.setChecked(false);
+            pauseButton.setChecked(false);
+            stopButton.setChecked(true);
+            songlistWidget.SetPlayState(false);
+            playlistWidget.SetPlayState(false);
+            statusBar()->showMessage(QString::fromStdString("Song stopped: " + error));
+        }
+    }
+
     if (!playbackEngine || !visualizerState)
         return;
 
+#ifdef Q_OS_ANDROID
+    // Song completion/transport still runs while hidden; visualizers do not.
+    if (qApp->applicationState() != Qt::ApplicationActive) {
+        if (playing && playbackEngine->SongEnded()) AdvanceSong(1);
+        return;
+    }
+#endif
     playbackEngine->GetVisualizerState(*visualizerState);
     vuMeter.SetLevel(
         visualizerState->masterRmsLeft,

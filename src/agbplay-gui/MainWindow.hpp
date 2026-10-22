@@ -9,6 +9,12 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <thread>
+#include <functional>
+#include <vector>
+class QProgressDialog;
+namespace Gsf { struct Song; }
+namespace DocumentAccess { struct FolderDocument; }
 #include <QListView>
 #include <QMainWindow>
 #include <QProgressBar>
@@ -20,13 +26,11 @@
 #include <QTimer>
 
 class PlaybackEngine;
+class AndroidPlayback;
 class ProfileManager;
 struct Settings;
 struct Profile;
-namespace std
-{
-    class thread;
-}
+
 struct MP2KVisualizerState;
 
 class MainWindow : public QMainWindow
@@ -34,16 +38,30 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    #ifdef Q_OS_ANDROID
+    static constexpr bool DefaultTouchInterface = true;
+#else
+    static constexpr bool DefaultTouchInterface = false;
+#endif
+    explicit MainWindow(QWidget *parent = nullptr, bool touchInterface = DefaultTouchInterface);
     ~MainWindow();
 
 private:
+    friend class TestTouchUi;
+    friend class BackgroundAudioProbe;
     void SetupMenuBar();
     void SetupToolBar();
     void SetupWidgets();
     void SetupStatusBar();
+    void SetupTouchInterface();
 
     void Play();
+#ifdef Q_OS_ANDROID
+    void AndroidPlaybackCommand(int command);
+    std::unique_ptr<AndroidPlayback> androidPlayback;
+    bool platformCommand = false;
+    bool outputSuspended = false;
+#endif
     void Pause();
     void Stop();
     void AdvanceSong(int indexDelta);
@@ -59,6 +77,18 @@ private:
     void PlaylistSwitchSong(int row);
 
     void ProfileImportGsfPlaylist(const std::filesystem::path &gameFilePath = "");
+    void ImportGsfPaths(const std::vector<std::filesystem::path> &paths);
+    void ApplyGsfPlaylist(const std::vector<Gsf::Song> &songs, bool replaceWithoutPrompt);
+    void RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task);
+    void RunWhenActive(std::function<void()> task);
+#ifdef Q_OS_ANDROID
+    std::vector<std::function<void()>> deferredUiTasks;
+#endif
+    void OpenDocuments(const std::vector<std::filesystem::path> &paths,
+                       const std::vector<Gsf::Song> *automaticPlaylist = nullptr);
+    void LoadGsfFolder();
+    void OpenGsfFolder(const QString &directory);
+    void ImportGsfFolder(const std::vector<DocumentAccess::FolderDocument> &documents, size_t library);
     bool AskGameCodeAndUpdateProfile();
 
     void LoadGame();
@@ -84,6 +114,8 @@ private:
 
 
     /* menu bar */
+    QAction *openRomAction = nullptr;
+    QAction *openGsfFolderAction = nullptr;
     QAction *exportSongsAction = nullptr;
     QAction *exportStemsAction = nullptr;
     QAction *quickExportSongAction = nullptr;
@@ -155,8 +187,14 @@ private:
     /* File Export */
     std::unique_ptr<std::thread> exportThread;
     std::atomic<bool> exportBusy = false;
+    std::thread importWorker;
+    std::shared_ptr<std::atomic<bool>> importCancelled;
+    QProgressDialog *importProgress = nullptr;
+    bool importBusy = false;
 
 signals:
     /* Use a signal instead of QMetaObject::invokeMethod for pre Qt 6.7 compatibility. */
     void LogMessageReceived(const std::string &msg);
+    void OpenRomRequested();
+    void OpenGsfFolderRequested();
 };

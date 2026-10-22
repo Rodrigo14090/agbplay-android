@@ -29,3 +29,12 @@ asan.log*
 
 # so does qtcreator
 /.qtcreator
+
+# Native Android outputs, SDKs and local toolchain paths
+/build-*/
+/.gradle/
+/local.properties
+*.apk
+*.aab
+*.keystore
+*.jks

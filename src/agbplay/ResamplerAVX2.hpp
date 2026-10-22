@@ -2,7 +2,7 @@
 
 #include "Resampler.hpp"
 
-#if __has_include(<immintrin.h>)
+#if defined(AGBPLAY_HAVE_AVX2) && (defined(__x86_64__) || defined(__i386__))
 
 #include <immintrin.h>
 

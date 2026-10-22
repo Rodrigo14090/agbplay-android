@@ -1,62 +1,40 @@
+#include "PlaybackEngine.hpp"
+#include "Debug.hpp"
+#include "Xcept.hpp"
 #include <algorithm>
-#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <thread>
-
-#if __has_include(<pa_win_wasapi.h>)
-#include <pa_win_wasapi.h>
-#endif
-#if __has_include(<pa_jack.h>)
-#include <pa_jack.h>
+#include <utility>
+#ifdef __ANDROID__
+#include <QJniEnvironment>
 #endif
 
-#include "Debug.hpp"
-#include "PlaybackEngine.hpp"
-#include "Util.hpp"
-#include "Xcept.hpp"
-
-/*
- * set JACK client name
- */
-
-/* use a global object to run the function before Pa_Initialize() */
-
-#if __has_include(<pa_jack.h>)
-struct JackNameSetter
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+namespace {
+template<class T> void UpdateMaximum(std::atomic<T> &value, T candidate) noexcept
 {
-    JackNameSetter() { PaJack_SetClientName("agbplay"); }
-} jackNameSetter;
+    auto current = value.load(std::memory_order_relaxed);
+    while (candidate > current &&
+           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+}
+template<class T> void UpdateMinimum(std::atomic<T> &value, T candidate) noexcept
+{
+    auto current = value.load(std::memory_order_relaxed);
+    while (candidate < current &&
+           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+}
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point start) noexcept
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - start).count());
+}
+}
 #endif
 
-/*
- * PlaybackEngine data
- */
-
-// first portaudio hostapi has highest priority, last hostapi has lowest
-// if none are available, the default one is selected.
-// they are also the ones which are known to work
-const std::vector<PaHostApiTypeId> PlaybackEngine::hostApiPriority = {
-    // Unix
-    paALSA,
-    paJACK,
-    // Windows
-    paWASAPI,
-    paMME,
-    // Mac OS
-    paCoreAudio,
-    paSoundManager,
-};
-
-/*
- * public PlaybackEngine
- */
-
-PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile)
-    : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), profile(profile)
+PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile, uint32_t reserveMs)
+    : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), sampleRate(sampleRate),
+      bufferPolicy(sampleRate, reserveMs), profile(profile)
 {
     ctx = std::make_unique<MP2KContext>(
         sampleRate,
@@ -67,10 +45,23 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
         profile.songTableInfoPlayback,
         profile.playerTablePlayback
     );
-    ctx->m4aSongNumStart(0);
-    ctx->m4aSongNumStop(0);
-    portaudioOpen();
-    playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    meterQueue = std::make_unique<AudioFrameQueue>();
+#endif
+    try {
+        playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
+        PrimeOutput(); // PCM is available before the backend can call RenderAudio.
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio);
+    } catch (...) {
+        output.reset();
+        {
+            std::scoped_lock lock(playerInvokeMutex);
+            playerThreadQuitRequest = true;
+        }
+        playerInvokeReady.notify_all();
+        if (playerThread && playerThread->joinable()) playerThread->join();
+        throw;
+    }
 #ifdef __linux__
     pthread_setname_np(playerThread->native_handle(), "mixer thread");
 #endif
@@ -78,20 +69,23 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
 
 PlaybackEngine::~PlaybackEngine()
 {
+    output.reset(); // joins/stops the device callback before queue/context destruction
     // stop and deallocate player thread if required
     if (playerThread) {
-        playerThreadQuitRequest = true;
+        {
+            std::scoped_lock lock(playerInvokeMutex);
+            playerThreadQuitRequest = true;
+        }
+        playerInvokeReady.notify_all();
         playerThread->join();
     }
 
-    portaudioClose();
 }
 
 void PlaybackEngine::LoadSong(uint16_t songIdx)
 {
-    trackMuted.reset();
-
     auto func = [this, songIdx]() {
+        trackMuted.reset();
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -128,7 +122,8 @@ void PlaybackEngine::Play()
 
 bool PlaybackEngine::Pause()
 {
-    auto func = [this]() {
+    bool playingAgain = false;
+    auto func = [this, &playingAgain]() {
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -144,13 +139,13 @@ bool PlaybackEngine::Pause()
             songEnded = false;
             paused = false;
         }
-        // paused = !paused;
+        playingAgain = !paused;
     };
 
     InvokeAsPlayer(func);
 
     /* Return true if the player was paused an is now playing again. False otherwise. */
-    return !paused;
+    return playingAgain;
 }
 
 void PlaybackEngine::Stop()
@@ -172,11 +167,8 @@ void PlaybackEngine::Stop()
 
 void PlaybackEngine::SpeedDouble()
 {
-    speedFactor <<= 1;
-    if (speedFactor > 1024)
-        speedFactor = 1024;
-
     auto func = [this]() {
+        speedFactor = std::min<uint32_t>(speedFactor * 2, 1024);
         // TODO replace this with m4aMPlayTempoControl
         ctx->reader.SetSpeedFactor(float(speedFactor) / 64.0f);
     };
@@ -186,11 +178,8 @@ void PlaybackEngine::SpeedDouble()
 
 void PlaybackEngine::SpeedHalve()
 {
-    speedFactor >>= 1;
-    if (speedFactor < 1)
-        speedFactor = 1;
-
     auto func = [this]() {
+        speedFactor = std::max<uint32_t>(speedFactor / 2, 1);
         // TODO replace this with m4aMPlayTempoControl
         ctx->reader.SetSpeedFactor(float(speedFactor) / 64.0f);
     };
@@ -208,9 +197,8 @@ void PlaybackEngine::ToggleMute(size_t index)
     if (index >= trackMuted.size())
         return;
 
-    trackMuted[index] = !trackMuted[index];
-
     auto func = [this, index]() {
+        trackMuted[index] = !trackMuted[index];
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -229,9 +217,8 @@ void PlaybackEngine::Mute(size_t index, bool mute)
     if (index >= trackMuted.size())
         return;
 
-    trackMuted[index] = mute;
-
     auto func = [this, index, mute]() {
+        trackMuted[index] = mute;
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -270,12 +257,14 @@ void PlaybackEngine::UpdateSoundMode()
      * the profile in the profile editor. No reloading is required and changes should
      * apply immediately. */
 
-    auto func = [this]() {
-        ctx->agbplaySoundMode = profile.agbplaySoundMode;
-        ctx->m4aSoundModeReverb(profile.mp2kSoundModePlayback.rev);
-        ctx->m4aSoundModePCMVol(profile.mp2kSoundModePlayback.vol);
-        ctx->m4aSoundModePCMFreq(profile.mp2kSoundModePlayback.freq);
-        ctx->m4aSoundModeDacConfig(profile.mp2kSoundModePlayback.dacConfig);
+    const auto newAgbMode = profile.agbplaySoundMode;
+    const auto newMode = profile.mp2kSoundModePlayback;
+    auto func = [this, newAgbMode, newMode]() {
+        ctx->agbplaySoundMode = newAgbMode;
+        ctx->m4aSoundModeReverb(newMode.rev);
+        ctx->m4aSoundModePCMVol(newMode.vol);
+        ctx->m4aSoundModePCMFreq(newMode.freq);
+        ctx->m4aSoundModeDacConfig(newMode.dacConfig);
         /* Do not update the playertable since it may cause playback issues.
          * The user is supposed to reload the game if that was changed with the
          * profile editor. */
@@ -294,7 +283,12 @@ void PlaybackEngine::GetVisualizerState(MP2KVisualizerState &visualizerState)
 }
 
 void PlaybackEngine::SetOutputNumBuffers(size_t numBuffers) {
-    ringbuffer.SetNumBuffers(numBuffers);
+    {
+        std::scoped_lock lock(playerInvokeMutex);
+        outputNumBuffers.store(std::clamp<size_t>(numBuffers, 1, 16));
+        ++scheduleRevision;
+    }
+    playerInvokeReady.notify_one();
 }
 
 void PlaybackEngine::SetMaxLoops(int8_t maxLoops) {
@@ -316,226 +310,313 @@ void PlaybackEngine::SetPlaybackVolume(float volume)
 
 void PlaybackEngine::threadWorker()
 {
-    try {
-        std::vector<sample> silenceBuffer(ctx->mixer.GetSamplesPerBuffer());
-
-        while (!playerThreadQuitRequest) {
-            /* Run events from main thread. */
-            InvokeRun();
-
-            if (paused) {
-                /* Silence output buffer. */
-                ringbuffer.Put(silenceBuffer);
-            } else {
-                /* Run sound engine. */
-                ctx->m4aSoundMain();
-                updateVisualizerState();
-
-                /* Write audio data to portaudio ringbuffer. */
-                assert(ctx->masterAudioBuffer.size() == ctx->mixer.GetSamplesPerBuffer());
-                ringbuffer.Put(ctx->masterAudioBuffer);
+    using namespace std::chrono_literals;
+#ifdef __ANDROID__
+    // Android gives normal app threads a lower scheduling class than its audio
+    // callback. Promote only this synthesis worker so UI activity cannot be
+    // the event that makes the producer run often enough.
+    {
+        QJniEnvironment env;
+        bool prioritySet = false;
+        jclass process = env->FindClass("android/os/Process");
+        if (process) {
+            jmethodID setPriority = env->GetStaticMethodID(process, "setThreadPriority", "(I)V");
+            if (setPriority) {
+                env->CallStaticVoidMethod(process, setPriority, -16); // THREAD_PRIORITY_AUDIO
+                prioritySet = !env->ExceptionCheck();
             }
-
-            /* Stop all players after loop fadeout (or end). */
-            if (ctx->SongEnded() && !songEnded) {
-                ctx->m4aMPlayAllStop();
-                ctx->m4aSoundClear();
-                songEnded = true;
+            env->DeleteLocalRef(process);
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            Debug::print("Could not set Android audio thread priority");
+        } else if (prioritySet) {
+            Debug::print("Android synthesis thread priority set to THREAD_PRIORITY_AUDIO (-16)");
+        } else {
+            Debug::print("Android audio thread priority API unavailable");
+        }
+    }
+#endif
+    try {
+        const size_t blockFrames = ctx->mixer.GetSamplesPerBuffer();
+        if (!blockFrames || blockFrames > AudioFrameQueue::Capacity)
+            throw Xcept("Invalid synthesis block size: {}", blockFrames);
+        std::vector<sample> silenceBuffer(blockFrames);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+        auto lastProducedAt = std::chrono::steady_clock::time_point{};
+#endif
+        while (!playerThreadQuitRequest) {
+            InvokeRun();
+            DrainOutputMetrics();
+            if (playerThreadQuitRequest) break;
+            if (suspended.load()) {
+                std::unique_lock lock(playerInvokeMutex);
+                playerInvokeReady.wait(lock, [this] {
+                    return playerInvokePending || playerThreadQuitRequest || !suspended.load();
+                });
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                lastProducedAt = {}; // intentional suspension is not a producer stall
+#endif
+                continue;
+            }
+            const size_t target = bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load());
+            const size_t queued = queue.Queued();
+            if (queued >= target || queue.Writable() < blockFrames) {
+                std::unique_lock lock(playerInvokeMutex);
+                // A control command may have changed the buffer preference
+                // between calculating target and acquiring this mutex.
+                if (target != bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load())) continue;
+                if ((queued >= target || (queued > 0 && queue.Writable() < blockFrames)) && primingRequested) {
+                    primingRequested = false;
+                    playerInvokeComplete.notify_all();
+                }
+                const auto revision = scheduleRevision;
+                const auto deadline = std::chrono::steady_clock::now() + bufferPolicy.WaitForRefill(queued, target);
+                const bool interrupted = playerInvokeReady.wait_until(lock, deadline, [this, revision] {
+                    return playerInvokePending || playerThreadQuitRequest || suspended.load() ||
+                           scheduleRevision != revision;
+                });
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                if (!interrupted && std::chrono::steady_clock::now() > deadline)
+                    UpdateMaximum(maxWakeLatenessNs, ElapsedNs(deadline));
+#else
+                (void)interrupted;
+#endif
+                continue;
+            }
+            try {
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                const auto startedAt = std::chrono::steady_clock::now();
+                if (lastProducedAt != std::chrono::steady_clock::time_point{})
+                    UpdateMaximum(maxProducerGapNs, static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt - lastProducedAt).count()));
+                lastProducedAt = startedAt;
+#endif
+                if (!paused) ctx->m4aSoundMain();
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                UpdateMaximum(maxSynthesisNs, ElapsedNs(startedAt));
+                const auto visualizerAt = std::chrono::steady_clock::now();
+#endif
+                if (!paused) updateVisualizerState();
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                UpdateMaximum(maxVisualizerNs, ElapsedNs(visualizerAt));
+#endif
+                const std::span<const sample> pcm = paused ? std::span<const sample>(silenceBuffer)
+                                                         : std::span<const sample>(ctx->masterAudioBuffer);
+                // Space was checked before synthesis. Only the consumer can
+                // advance meanwhile, so failure is an invariant violation.
+                if (!queue.Put(pcm)) throw Xcept("Synthesis frame exceeds available audio queue space");
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+                producedFrames.fetch_add(pcm.size(), std::memory_order_relaxed);
+                UpdateMaximum(maxProducerWorkNs, ElapsedNs(startedAt));
+#endif
+                if (ctx->SongEnded() && !songEnded) {
+                    ctx->m4aMPlayAllStop();
+                    ctx->m4aSoundClear();
+                    songEnded = true;
+                }
+            } catch (const std::exception &e) {
+                Recover(e.what());
             }
         }
-
-        playerThreadQuitError.clear();
-    } catch (std::exception &e) {
-        Debug::print("player thread has crashed: {}", e.what());
+        DrainOutputMetrics();
+    } catch (const std::exception &e) {
+        std::scoped_lock lock(playerInvokeMutex);
         playerThreadQuitError = e.what();
     }
+    {
+        std::scoped_lock lock(playerInvokeMutex);
+        playerThreadQuitComplete = true;
+    }
+    playerInvokeComplete.notify_all();
+}
 
-    std::unique_lock l(playerInvokeMutex);
-    playerThreadQuitComplete = true;
+void PlaybackEngine::Recover(const char *message)
+{
+    Debug::print("Song stopped: {}", message);
+    // Stop channels before track state is reused; retain the mixer/reverb settings.
+    ctx->m4aMPlayAllStop();
+    ctx->m4aSoundClear();
+    for (auto &player : ctx->players)
+        player.Init(ctx->rom, 0);
+    ctx->primaryPlayer = 0;
+    paused = true;
+    songEnded = false; // do not automatically advance through broken table entries
+    {
+        std::scoped_lock lock(errorMutex);
+        playbackError = message;
+    }
+    updateVisualizerState();
+}
+
+std::string PlaybackEngine::TakeError()
+{
+    if (auto deviceError = output->TakeError(); !deviceError.empty())
+        return deviceError;
+    std::scoped_lock lock(errorMutex);
+    return std::exchange(playbackError, {});
+}
+
+void PlaybackEngine::PrimeOutput()
+{
+    std::unique_lock lock(playerInvokeMutex);
+    primingRequested = true;
+    suspended.store(false);
+    ++scheduleRevision;
+    playerInvokeReady.notify_one();
+    playerInvokeComplete.wait(lock, [this] { return !primingRequested || playerThreadQuitComplete; });
+    if (playerThreadQuitComplete) throw Xcept("Playback thread stopped while priming: {}", playerThreadQuitError);
+}
+
+void PlaybackEngine::SuspendOutput(bool suspend)
+{
+    if (suspend) {
+        // Keep supplying PCM until the device has stopped consuming it.
+        output->Suspend(true);
+        {
+            std::scoped_lock lock(playerInvokeMutex);
+            suspended.store(true);
+            ++scheduleRevision;
+        }
+        playerInvokeReady.notify_one();
+    } else {
+        PrimeOutput(); // fill while the device is still suspended
+        output->Suspend(false);
+    }
+}
+
+void PlaybackEngine::DiscardBufferedAudio()
+{
+    InvokeAsPlayer([this] { queue.DiscardPending(); ++scheduleRevision; });
 }
 
 void PlaybackEngine::updateVisualizerState()
 {
-    /* We assume that GetVisualizerState may be more expensive than a simple copy.
-     * Accordingly we generate the state, then we lock the mutex and publish the state.
-     * That way the mutex is only locked for the smallest duration necessary. */
+    // Generate privately, then publish without waiting for the UI reader.
 
     ctx->GetVisualizerState(visualizerStatePlayer);
 
-    std::scoped_lock l(visualizerStateMutex);
-
-    visualizerStateObserver = visualizerStatePlayer;
+    // The UI may allocate/copy a large snapshot while it owns this mutex.
+    // Publishing is optional; never delay the PCM producer waiting for the UI.
+    std::unique_lock lock(visualizerStateMutex, std::try_to_lock);
+    if (lock.owns_lock()) visualizerStateObserver = visualizerStatePlayer;
 }
 
 void PlaybackEngine::InvokeAsPlayer(const std::function<void(void)> &func)
 {
-    /* This function must be called from within the main thread only! */
+    // UI thread only. Execute commands on the synthesis worker; predicate waits
+    // handle spurious wakeups and worker termination.
     assert(std::this_thread::get_id() != playerThread->get_id());
-
-    std::unique_lock l(playerInvokeMutex);
-
+    std::unique_lock lock(playerInvokeMutex);
+    if (playerThreadQuitComplete)
+        throw Xcept("Playback thread stopped: {}", playerThreadQuitError);
+    playerCommand = func;
     playerInvokePending = true;
-    playerInvokeReady.wait(l);
-    func();
-    playerInvokePending = false;
-    playerInvokeComplete.notify_one();
+    playerInvokeReady.notify_one();
+    playerInvokeComplete.wait(lock, [this] { return !playerInvokePending || playerThreadQuitComplete; });
+    if (playerThreadQuitComplete)
+        throw Xcept("Playback thread stopped: {}", playerThreadQuitError);
 }
 
 void PlaybackEngine::InvokeRun()
 {
-    /* This function must be called from within the player thread only! */
-    // This does not work as playerThread is not fully initialized eventhough this thread is already running
-    // assert(std::this_thread::get_id() == playerThread->get_id());
-
+    std::unique_lock lock(playerInvokeMutex);
     if (!playerInvokePending)
         return;
-
-    std::unique_lock l(playerInvokeMutex);
-
-    if (playerThreadQuitComplete) [[unlikely]] {
-        /* if the player thread has exited already, we can't invoke
-         * a function as we'll wait forever for the thread to become ready. */
-        if (playerThreadQuitError.size() > 0)
-            throw Xcept("Playback thread has crashed: {}", playerThreadQuitError);
-        throw Xcept("Unable to send request to playback thread, which is not running.");
-    }
-
-    playerInvokeReady.notify_one();
-
-    /* wait for remote invocation to complete... */
-    playerInvokeComplete.wait(l);
-}
-
-int PlaybackEngine::audioCallback(
-    const void *inputBuffer,
-    void *outputBuffer,
-    unsigned long framesPerBuffer,
-    const PaStreamCallbackTimeInfo *timeInfo,
-    PaStreamCallbackFlags statusFlags,
-    void *userData
-)
-{
-    (void)inputBuffer;
-    (void)timeInfo;
-    (void)statusFlags;
-    PlaybackEngine *_this = static_cast<PlaybackEngine *>(userData);
-
-    std::span<sample> outputBufferSpan{static_cast<sample *>(outputBuffer), framesPerBuffer};
-
-    _this->ringbuffer.Take(outputBufferSpan);
-
-    const float volTarget = _this->playerThreadVolumeTarget;
-
-    for (size_t i = 0; i < framesPerBuffer; i++) {
-        outputBufferSpan[i].left *= _this->playerThreadVolumeCur;
-        outputBufferSpan[i].right *= _this->playerThreadVolumeCur;
-
-        _this->playerThreadVolumeCur += _this->volumeRampCoeff * (volTarget - _this->playerThreadVolumeCur);
-    }
-
-    return paContinue;
-}
-
-void PlaybackEngine::portaudioOpen()
-{
-    auto &sys = portaudio::System::instance();
-
-    // init host api
-    std::vector<PaHostApiTypeId> hostApiPrioritiesWithFallback = hostApiPriority;
-    const auto &defaultHostApi = sys.defaultHostApi();
-    const auto f =
-        std::find(hostApiPrioritiesWithFallback.begin(), hostApiPrioritiesWithFallback.end(), defaultHostApi.typeId());
-    if (f == hostApiPrioritiesWithFallback.end())
-        hostApiPrioritiesWithFallback.push_back(defaultHostApi.typeId());
-
-    bool streamOpen = false;
-
-    /* Loop over all wanted host APIs in the prioritized order and use the first one,
-     * which can successfully open a stream with the default device. */
-    for (const auto apiType : hostApiPrioritiesWithFallback) {
-        const PaHostApiIndex hostApiIndex = Pa_HostApiTypeIdToHostApiIndex(apiType);
-        if (hostApiIndex < 0)
-            continue;
-
-        const auto &currentHostApi = sys.hostApiByIndex(hostApiIndex);
-
-        std::shared_ptr<void> hostApiSpecificStreamInfo;
-
-#if __has_include(<pa_win_wasapi.h>)
-        if (apiType == paWASAPI) {
-            PaWasapiStreamInfo info;
-            memset(&info, 0, sizeof(info));
-            info.size = sizeof(info);
-            info.hostApiType = paWASAPI;
-            info.version = 1;
-            info.flags = paWinWasapiAutoConvert;
-            hostApiSpecificStreamInfo = std::make_shared<PaWasapiStreamInfo>(info);
-        }
-#endif
-
-        auto &outputDevice = currentHostApi.defaultOutputDevice();
-
-        // Manually set the latency for ALSA on Linux
-        // See: https://github.com/ipatix/agbplay/issues/93
-        // PortAudio will unfortunately suggest a latency value, which
-        // is a very odd number (e.g. 8.7ms on developer machine).
-        // PipeWire takes those latency values very literally.
-        // With 48 kHz samplerate this causes a period size of 104 samples,
-        // and that causes unstable output. Round this up to the closest power of two instead.
-        double latency = outputDevice.defaultLowOutputLatency();
-        if (apiType == paALSA) {
-            long framesPerPeriodSigned = lround(latency * static_cast<double>(ctx->sampleRate));
-            assert(framesPerPeriodSigned >= 0);
-            const unsigned long framesPerPeriod = std::bit_ceil(static_cast<unsigned long>(framesPerPeriodSigned));
-            if (framesPerPeriod > 0)
-                latency = static_cast<double>(framesPerPeriod) / static_cast<double>(ctx->sampleRate);
-        }
-
-        portaudio::DirectionSpecificStreamParameters outPars(
-            outputDevice,
-            2,    // stereo
-            portaudio::SampleDataFormat::FLOAT32,
-            true,
-            latency,
-            hostApiSpecificStreamInfo.get()
-        );
-
-        portaudio::StreamParameters pars(
-            portaudio::DirectionSpecificStreamParameters::null(),
-            outPars,
-            ctx->sampleRate,
-            paFramesPerBufferUnspecified,
-            paNoFlag
-        );
-
-        try {
-            audioStream.open(pars, audioCallback, static_cast<void *>(this));
-
-            audioStream.start();
-        } catch (portaudio::Exception &e) {
-            Debug::print(
-                "unable to open/start stream on device <{}> with Host API <{}>: {}",
-                outputDevice.name(),
-                currentHostApi.name(),
-                e.what()
-            );
-            continue;
-        }
-
-        streamOpen = true;
-        break;
-    }
-
-    if (!streamOpen)
-        throw Xcept("Unable to initialize sound output: Host API could not be initialized");
-}
-
-void PlaybackEngine::portaudioClose()
-{
     try {
-        audioStream.stop();
-        audioStream.close();
-    } catch (portaudio::Exception &e) {
-        Debug::print("Error while stopping/closing portaudio stream: {}", e.what());
+        playerCommand();
+    } catch (const std::exception &e) {
+        Recover(e.what());
     }
+    playerCommand = {};
+    playerInvokePending = false;
+    lock.unlock();
+    playerInvokeComplete.notify_one();
+}
+
+void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
+{
+    auto &self = *static_cast<PlaybackEngine *>(user);
+    const size_t frames = output.size() / 2;
+    self.callbackFrames.store(std::max<size_t>(1, frames), std::memory_order_relaxed);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    const auto startedAt = std::chrono::steady_clock::now();
+    const auto startedNs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt.time_since_epoch()).count());
+    const auto previousCallbackNs = self.lastCallbackStartNs.exchange(startedNs, std::memory_order_relaxed);
+    if (previousCallbackNs != 0 && startedNs >= previousCallbackNs)
+        UpdateMaximum(self.maxCallbackIntervalNs, startedNs - previousCallbackNs);
+    UpdateMinimum(self.minCallbackFrames, frames);
+    UpdateMaximum(self.maxCallbackFrames, frames);
+    self.callbackCount.fetch_add(1, std::memory_order_relaxed);
+    self.callbackRequestedFrames.fetch_add(frames, std::memory_order_relaxed);
+#endif
+    self.queue.Take(output);
+    const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
+    for (size_t i = 0; i + 1 < output.size(); i += 2) {
+        output[i] *= self.playerThreadVolumeCur;
+        output[i + 1] *= self.playerThreadVolumeCur;
+        self.playerThreadVolumeCur += self.volumeRampCoeff * (target - self.playerThreadVolumeCur);
+    }
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    // Bounded PCM tap: only a copy on the realtime thread. Analysis runs on
+    // the producer. If telemetry fills, drop telemetry, never playback PCM.
+    if (!self.meterQueue->PutInterleaved(output))
+        self.meterDroppedFrames.fetch_add(frames, std::memory_order_relaxed);
+    UpdateMaximum(self.maxCallbackNs, ElapsedNs(startedAt));
+#endif
+}
+
+void PlaybackEngine::DrainOutputMetrics()
+{
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    std::unique_lock lock(pcmStatsMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+    std::array<float, 1024> pcm;
+    // Bound analysis even if the consumer is continuously filling the tap.
+    for (int block = 0; block < 8; ++block) {
+        const size_t frames = meterQueue->Read(pcm);
+        if (!frames) break;
+        pcmStats.Add(std::span<const float>(pcm).first(frames * 2));
+    }
+#endif
+}
+
+PlaybackEngine::AudioDiagnostics PlaybackEngine::TakeAudioDiagnostics() noexcept
+{
+    AudioDiagnostics result{};
+    result.queue = queue.TakeDiagnostics();
+    result.sampleRate = sampleRate;
+    result.targetFrames = bufferPolicy.Target(outputNumBuffers.load(), callbackFrames.load());
+    result.lowWatermarkFrames = bufferPolicy.LowWatermark(result.targetFrames);
+    result.synthesisBlockFrames = ctx->mixer.GetSamplesPerBuffer(); // immutable after construction
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
+    const auto now = std::chrono::steady_clock::now();
+    result.elapsedSeconds = std::chrono::duration<double>(now - diagnosticsAt).count();
+    diagnosticsAt = now;
+    result.maxSynthesisNs = maxSynthesisNs.exchange(0, std::memory_order_relaxed);
+    result.maxProducerGapNs = maxProducerGapNs.exchange(0, std::memory_order_relaxed);
+    result.maxCallbackNs = maxCallbackNs.exchange(0, std::memory_order_relaxed);
+    result.maxCallbackIntervalNs = maxCallbackIntervalNs.exchange(0, std::memory_order_relaxed);
+    result.minCallbackFrames = minCallbackFrames.exchange(static_cast<size_t>(-1), std::memory_order_relaxed);
+    if (result.minCallbackFrames == static_cast<size_t>(-1)) result.minCallbackFrames = 0;
+    result.maxCallbackFrames = maxCallbackFrames.exchange(0, std::memory_order_relaxed);
+    result.callbackCount = callbackCount.exchange(0, std::memory_order_relaxed);
+    result.requestedFrames = callbackRequestedFrames.exchange(0, std::memory_order_relaxed);
+    result.producedFrames = producedFrames.exchange(0, std::memory_order_relaxed);
+    result.maxProducerWorkNs = maxProducerWorkNs.exchange(0, std::memory_order_relaxed);
+    result.maxVisualizerNs = maxVisualizerNs.exchange(0, std::memory_order_relaxed);
+    result.maxWakeLatenessNs = maxWakeLatenessNs.exchange(0, std::memory_order_relaxed);
+    result.meterDroppedFrames = meterDroppedFrames.exchange(0, std::memory_order_relaxed);
+    {
+        std::scoped_lock lock(pcmStatsMutex);
+        result.outputRms = pcmStats.Rms();
+        result.outputPeak = pcmStats.peak;
+        result.clippedSamples = pcmStats.clippedSamples;
+        result.nonFiniteSamples = pcmStats.nonFiniteSamples;
+        result.meteredSamples = pcmStats.finiteSamples + pcmStats.nonFiniteSamples;
+        pcmStats = {};
+    }
+#endif
+    return result;
 }

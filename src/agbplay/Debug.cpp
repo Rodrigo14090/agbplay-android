@@ -10,10 +10,12 @@
 #include <sstream>
 #include <string>
 
+static std::mutex debugMutex;
 static FILE *debug_file = nullptr;
 
 bool Debug::open(const char *file)
 {
+    std::scoped_lock lock(debugMutex);
     if (!file)
         return true;
 
@@ -27,6 +29,7 @@ bool Debug::open(const char *file)
 
 bool Debug::close()
 {
+    std::scoped_lock lock(debugMutex);
     if (debug_file == nullptr)
         return true;
 
@@ -41,12 +44,14 @@ static void *cb_obj = nullptr;
 
 void Debug::set_callback(void (*cb)(const std::string &, void *), void *obj)
 {
+    std::scoped_lock lock(debugMutex);
     callback = cb;
     cb_obj = obj;
 }
 
 void Debug::puts(const std::string &msg)
 {
+    std::scoped_lock lock(debugMutex);
     /* gcc/libstdc++ 12 does not yet support std::format, use C fallback for now */
     const auto curTime = std::chrono::system_clock::now();
     const auto curTimeT = std::chrono::system_clock::to_time_t(curTime);

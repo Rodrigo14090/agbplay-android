@@ -139,7 +139,12 @@ bool SequenceReader::TrackMain(MP2KPlayer &player, MP2KTrack &trk)
     TickTrackNotes(trk);
 
     /* Count down track delay and process events if necessary. */
+    // A malformed GOTO/PATT loop can run forever without advancing GBA time.
+    // This generous per-track tick budget leaves ordinary sequences unchanged.
+    size_t commandsRemaining = 16384;
     while (trk.delay == 0) {
+        if (commandsRemaining-- == 0)
+            throw Xcept("Sequence command budget exceeded at {:#x} (track {})", trk.pos, trk.trackIdx);
         uint8_t cmd = rom.ReadU8(trk.pos);
 
         // check if a previous command should be repeated
@@ -381,6 +386,10 @@ void SequenceReader::cmdPlayNote(MP2KPlayer &player, MP2KTrack &trk, uint8_t cmd
 
     const MP2KChn *chn = nullptr;
     const uint8_t instrType = rom.ReadU8(instrPos);
+
+    if (ctx.sndChannels.size() + ctx.sq1Channels.size() + ctx.sq2Channels.size() +
+        ctx.waveChannels.size() + ctx.noiseChannels.size() >= 32768)
+        throw Xcept("Active channel budget exceeded");
 
     // enqueue actual note
     if (instrType & BANKDATA_TYPE_CGB) {

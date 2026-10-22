@@ -21,6 +21,7 @@ public:
     TrackWidget(size_t trackNo, QWidget *parent = nullptr);
     ~TrackWidget() override;
 
+    void setTouchLayout();
     void setMuted(bool muted, bool visualOnly = false);
     bool isMuted() const;
     void setSolo(bool solo, bool visualOnly = false);

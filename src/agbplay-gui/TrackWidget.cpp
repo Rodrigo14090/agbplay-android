@@ -149,6 +149,54 @@ TrackWidget::TrackWidget(size_t trackNo, QWidget *parent) : QWidget(parent), tra
     layout.setColumnStretch(COL_PADR, 1);
 
     connect(&keyboardWidget, &KeyboardWidget::pressedChanged, this, &TrackWidget::updateAnalyzer);
+
+}
+
+void TrackWidget::setTouchLayout()
+{
+    // The original keyboard/VU layout is moved intact below the touch controls.
+    layout.removeItem(&vuBarKeyboardLayout);
+    vuBarKeyboardLayout.setParent(nullptr);
+    while (auto *item = layout.takeAt(0))
+        delete item;
+    for (int column = 0; column <= COL_PADR; ++column) {
+        layout.setColumnMinimumWidth(column, 0);
+        layout.setColumnStretch(column, 0);
+    }
+    layout.setRowMinimumHeight(0, 0);
+    layout.setContentsMargins(6, 4, 6, 4);
+    layout.setHorizontalSpacing(4);
+    layout.setVerticalSpacing(4);
+    setFixedHeight(148);
+    for (auto *button : {&muteButton, &soloButton, &analyzerButton}) {
+        button->setFixedSize(48, 48);
+        button->setAccessibleName(button->toolTip());
+    }
+    layout.addWidget(&trackNoLabel, 0, 0);
+    layout.addWidget(&muteButton, 0, 1);
+    layout.addWidget(&soloButton, 0, 2);
+    layout.addWidget(&analyzerButton, 0, 3);
+    posLabel.setFixedWidth(88);
+    layout.addWidget(&posLabel, 0, 4);
+    layout.setColumnStretch(4, 1);
+    auto *readouts = new QWidget(this);
+    auto *fields = new QHBoxLayout(readouts);
+    fields->setContentsMargins(0, 0, 0, 0);
+    fields->setSpacing(2);
+    for (auto *label : {&instNoLabel, &volLabel, &panLabel, &modLabel, &pitchLabel, &restLabel, &voiceTypeLabel}) {
+        auto *field = new QVBoxLayout;
+        auto *name = new QLabel(label->toolTip().split(' ').first(), readouts);
+        name->setFont(labelFont);
+        name->setPalette(label->palette());
+        field->setSpacing(0);
+        field->addWidget(name);
+        field->addWidget(label);
+        fields->addLayout(field);
+    }
+    layout.addWidget(readouts, 1, 0, 1, 5);
+    keyboardWidget.setMinimumWidth(0);
+    keyboardWidget.setMaximumWidth(QWIDGETSIZE_MAX);
+    layout.addLayout(&vuBarKeyboardLayout, 2, 0, 1, 5);
 }
 
 TrackWidget::~TrackWidget()

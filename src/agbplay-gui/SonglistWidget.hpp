@@ -20,6 +20,7 @@ public:
     explicit SonglistWidget(const QString &titleString, bool editable, QWidget *parent = nullptr);
     ~SonglistWidget() override;
 
+    void EnableTouchInterface();
     void Clear();
     void AddSong(const std::string &name, uint16_t id);
     void RemoveSong();

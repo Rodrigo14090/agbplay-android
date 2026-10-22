@@ -19,6 +19,7 @@ public:
 
     void setVisualizerState(const MP2KVisualizerStatePlayer &state, size_t activeChannels);
     void setPressed(const std::bitset<128> &pressed);
+    void setTouchLayout();
     void reset();
     void resetMaxChannels();
 

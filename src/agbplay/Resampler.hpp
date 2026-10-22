@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 /*
@@ -29,6 +30,14 @@ public:
     virtual ~Resampler();
 
 protected:
+    void ValidateRequest(float phaseInc, size_t outputSamples) const
+    {
+        // Corrupt pitch/sample metadata must not overflow float-to-size_t or
+        // request gigabytes before the ROM reader can report an invalid sample.
+        const double requested = double(phase) + double(phaseInc) * double(outputSamples);
+        if (!std::isfinite(requested) || requested < 0 || requested > 1048576)
+            throw std::runtime_error("Invalid or excessive resampler sample request");
+    }
     std::vector<float> fetchBuffer;
     float phase = 0.0f;
 

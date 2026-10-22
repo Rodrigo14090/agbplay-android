@@ -97,7 +97,7 @@ void StatusWidget::updateMuteOrSolo(bool visualOnly)
 {
     bool isSoloActive = false;
     for (const TrackWidget *trackWidget : trackWidgets) {
-        if (!trackWidget->isVisible())
+        if (trackWidget->isHidden())
             continue;
 
         if (trackWidget->isSolo()) {
@@ -107,7 +107,7 @@ void StatusWidget::updateMuteOrSolo(bool visualOnly)
     }
 
     for (TrackWidget *trackWidget : trackWidgets) {
-        if (!trackWidget->isVisible())
+        if (trackWidget->isHidden())
             continue;
 
         if (isSoloActive) {
@@ -125,7 +125,7 @@ void StatusWidget::updateAnalyzer()
     std::bitset<128> pressed;
 
     for (const TrackWidget *trackWidget : trackWidgets) {
-        if (!trackWidget->isVisible())
+        if (trackWidget->isHidden())
             continue;
 
         if (trackWidget->isAnalyzing())
