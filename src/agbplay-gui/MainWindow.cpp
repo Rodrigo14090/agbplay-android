@@ -737,8 +737,13 @@ void MainWindow::ProfileImportGsfPlaylist(const std::filesystem::path &gameFileP
         /* If no path is passed, ask the user to specify them interactively */
         if (!fileDialog.exec())
             return;
-        for (int i = 0; i < fileDialog.selectedFiles().size(); i++)
-            pathsToLoad.emplace_back(DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(i)));
+        try {
+            for (const auto &url : fileDialog.selectedUrls())
+                pathsToLoad.emplace_back(DocumentAccess::LocalCopy(url.toString(QUrl::FullyEncoded)));
+        } catch (const std::exception &error) {
+            MBoxError("Open document", error.what());
+            return;
+        }
     } else {
         if (FileReader::cmpPathExt(gameFilePath, "gsflib")) {
             /* Main file loaded from raw file -> load minigsfs from same folder */
@@ -878,19 +883,19 @@ void MainWindow::LoadGame()
     if (!fileDialog.exec())
         return;
 
-    if (!CloseGame())
-        return;
-
-    if (fileDialog.selectedFiles().size() != 1)
+    if (fileDialog.selectedUrls().size() != 1)
         return;
     std::filesystem::path selectedFile;
     try {
-        selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(0));
+        selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedUrls().at(0).toString(QUrl::FullyEncoded));
     } catch (const std::exception &e) {
         MBoxError("Open document", e.what());
         return;
     }
 
+    // A provider/read failure must leave the current game and playlist intact.
+    if (!CloseGame())
+        return;
     std::vector<std::shared_ptr<Profile>> profileCandidates;
 
     /* Load ROM and find matching profiles. GetProfiles creates a new profile if the scanner

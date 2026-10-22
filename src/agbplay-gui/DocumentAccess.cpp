@@ -1,53 +1,56 @@
 #include "DocumentAccess.hpp"
 #include "Xcept.hpp"
-#include <QCryptographicHash>
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QSaveFile>
 #include <QStandardPaths>
 #include <QUrl>
+
+#ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
+#include <QJniObject>
+#include <QCoreApplication>
+
+namespace {
+void CheckJavaException(QJniEnvironment &env)
+{
+    if (!env->ExceptionCheck()) return;
+    const auto exception = env->ExceptionOccurred();
+    env->ExceptionClear();
+    const auto throwable = QJniObject::fromLocalRef(exception);
+    const auto detail = throwable.callObjectMethod("toString", "()Ljava/lang/String;").toString();
+    throw Xcept("Android document import failed: {}", detail.toStdString());
+}
+}
+#endif
 
 std::filesystem::path DocumentAccess::LocalCopy(const QString &document)
 {
     const QUrl url(document);
     if (url.scheme() != "content")
         return (url.isLocalFile() ? url.toLocalFile() : document).toStdString();
-    QFile input(document);
-    if (!input.open(QIODevice::ReadOnly))
-        throw Xcept("Cannot read selected document: {}", input.errorString().toStdString());
-    const QString directory = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/imports";
-    if (!QDir().mkpath(directory))
-        throw Xcept("Cannot create import directory");
-    const auto key = QCryptographicHash::hash(document.toUtf8(), QCryptographicHash::Sha256).toHex();
-    const auto suffix = QFileInfo(input).suffix();
-    const QString destination = directory + '/' + QString::fromLatin1(key) + '.' + suffix;
-    QSaveFile output(destination);
-    if (!output.open(QIODevice::WriteOnly))
-        throw Xcept("Cannot create private document copy");
-    // ZIP/GSF may exceed raw ROM size; cap imports to 64 MiB before any parser allocates.
-    constexpr qint64 limit = 64 * 1024 * 1024;
-    qint64 total = 0;
-    while (!input.atEnd()) {
-        const auto chunk = input.read(65536);
-        if (chunk.isEmpty() && input.error() != QFile::NoError)
-            throw Xcept("Document read failed");
-        total += chunk.size();
-        if (total > limit)
-            throw Xcept("Document exceeds 64 MiB import limit");
-        if (output.write(chunk) != chunk.size())
-            throw Xcept("Document copy failed (storage full?)");
-    }
-    if (!output.commit())
-        throw Xcept("Cannot finish document import");
-    return destination.toStdString();
-}
-
 #ifdef Q_OS_ANDROID
-#include <QJniObject>
-#include <QCoreApplication>
-
+    const QString directory = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/imports";
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    const auto uri = QJniObject::fromString(document);
+    const auto root = QJniObject::fromString(directory);
+    // Use raw JNI for the call so Java's actual exception reaches the error dialog
+    // instead of being cleared by QJniObject and replaced with "Unknown error".
+    QJniEnvironment env;
+    const auto importer = env.findClass("org/agbplay/android/DocumentImporter");
+    CheckJavaException(env);
+    if (!importer) throw Xcept("Android DocumentImporter class not found");
+    const auto method = env->GetStaticMethodID(importer, "importDocument",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;");
+    CheckJavaException(env);
+    if (!method) throw Xcept("Android DocumentImporter method not found");
+    const auto result = env->CallStaticObjectMethod(importer, method, context.object(),
+                                                   uri.object<jstring>(), root.object<jstring>());
+    CheckJavaException(env);
+    const auto path = QJniObject::fromLocalRef(result).toString();
+    if (path.isEmpty()) throw Xcept("Android document provider returned an empty import path");
+    return path.toStdString();
+#else
+    throw Xcept("Android content URIs require the Android document resolver");
 #endif
+}
 
 bool DocumentAccess::ShareFile(const QString &path)
 {

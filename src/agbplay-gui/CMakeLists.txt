@@ -38,8 +38,8 @@ if(ANDROID)
         QT_ANDROID_APP_NAME "agbplay"
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35
-        QT_ANDROID_VERSION_CODE 2
-        QT_ANDROID_VERSION_NAME "1.0.1-android-dev")
+        QT_ANDROID_VERSION_CODE 3
+        QT_ANDROID_VERSION_NAME "1.0.2-android-dev")
 endif()
 
 target_compile_options(agbplay-gui PRIVATE -Wall -Wextra -Wconversion)
