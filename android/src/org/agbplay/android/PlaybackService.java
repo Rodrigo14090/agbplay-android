@@ -36,7 +36,7 @@ public final class PlaybackService extends Service {
     private MediaSession session;
     private PowerManager.WakeLock wake;
     private String title = "agbplay";
-    private boolean playing, wanted, foreground, receiverRegistered;
+    private boolean playing, wanted, foreground, receiverRegistered, explicitStop;
     private final Runnable expirePause = () -> stopSelf();
     private final BroadcastReceiver noisy = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -69,7 +69,7 @@ public final class PlaybackService extends Service {
         session.setCallback(new MediaSession.Callback() {
             @Override public void onPlay() { startPlayback(); }
             @Override public void onPause() { pausePlayback(false); }
-            @Override public void onStop() { stopSelf(); }
+            @Override public void onStop() { explicitStop = true; stopSelf(); }
             @Override public void onSkipToNext() { command(4); }
             @Override public void onSkipToPrevious() { command(5); }
         }, MAIN);
@@ -87,7 +87,7 @@ public final class PlaybackService extends Service {
         String action = intent.getAction();
         if (PLAY.equals(action)) startPlayback();
         else if (PAUSE.equals(action)) pausePlayback(false);
-        else if (STOP.equals(action)) stopSelf();
+        else if (STOP.equals(action)) { explicitStop = true; stopSelf(); }
         return START_NOT_STICKY; // a restarted Java service cannot restore a missing C++ engine
     }
 
@@ -156,13 +156,16 @@ public final class PlaybackService extends Service {
     @Override public void onDestroy() {
         instance = null;
         MAIN.removeCallbacks(expirePause);
+        // Expiring an idle service must not turn Pause into Stop or lose the
+        // C++ song position. Explicit Stop still resets a paused player.
+        boolean stopNative = playing || explicitStop;
         wanted = playing = false;
         if (wake != null && wake.isHeld()) wake.release();
         if (audio != null) audio.abandonAudioFocusRequest(focus);
         if (receiverRegistered) unregisterReceiver(noisy);
         if (session != null) { session.setActive(false); session.release(); }
         stopForeground(STOP_FOREGROUND_REMOVE);
-        command(3);
+        if (stopNative) command(3);
         super.onDestroy();
     }
     @Override public IBinder onBind(Intent intent) { return null; }

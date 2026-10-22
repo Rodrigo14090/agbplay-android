@@ -49,7 +49,8 @@ desconexión de auriculares pausa sin reanudar automáticamente. La pausa explí
 anula una reanudación pendiente y abandona el foco. Se libera el bloqueo de CPU
 al pausar y se mantiene una sesión pausada durante un plazo nominal de cinco
 minutos para permitir reanudar desde la notificación. Después se detiene el
-servicio. Stop, cierre del juego, error y salida liberan servicio, notificación,
+servicio, conservando la posición pausada del motor para reanudar desde la app.
+Stop, cierre del juego, error y salida liberan servicio, notificación,
 MediaSession, foco y bloqueo de CPU.
 
 La pausa suspende primero el consumo y conserva el PCM pendiente para reanudar
