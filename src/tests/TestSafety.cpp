@@ -2,6 +2,7 @@
 #include "AudioFrameQueue.hpp"
 #include "MP2KContext.hpp"
 #include "Rom.hpp"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <iostream>
@@ -40,11 +41,15 @@ int main() {
     ctx.m4aMPlayAllStop(); ctx.m4aSoundClear();
     ctx.m4aSongNumStart(0);
     double energy = 0;
+    double sampleCount = 0;
+    float pcmPeak = 0.0f;
     for (int frame = 0; frame < 600; ++frame) {
         ctx.m4aSoundMain();
         for (const auto &s : ctx.masterAudioBuffer) {
             CHECK(std::isfinite(s.left) && std::isfinite(s.right));
             energy += double(s.left) * s.left + double(s.right) * s.right;
+            sampleCount += 2;
+            pcmPeak = std::max({pcmPeak, std::abs(s.left), std::abs(s.right)});
         }
     }
     CHECK(energy > 0.01);
@@ -106,5 +111,16 @@ int main() {
     }
     producer.join();
     CHECK(expected == 100001);
-    std::cout << "ROM boundaries, corrupt input, sequence budget, PCM playback, FIFO stress passed; energy=" << energy << '\n';
+    AudioFrameQueue underrunQueue;
+    std::array<float, 8> silence{};
+    underrunQueue.Take(silence);
+    CHECK(std::all_of(silence.begin(), silence.end(), [](float value) { return value == 0.0f; }));
+    const auto underrunStats = underrunQueue.TakeDiagnostics();
+    CHECK(underrunStats.underrunCallbacks == 1);
+    CHECK(underrunStats.underrunFrames == 4);
+    CHECK(underrunStats.minQueued == 0);
+    CHECK(underrunStats.maxQueued == 0);
+    std::cout << "ROM boundaries, corrupt input, sequence budget, PCM playback, FIFO stress passed; "
+              << "synthetic PCM RMS=" << std::sqrt(energy / sampleCount)
+              << " peak=" << pcmPeak << " samples=" << sampleCount << '\n';
 }

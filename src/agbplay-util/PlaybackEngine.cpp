@@ -6,6 +6,38 @@
 #include <chrono>
 #include <cmath>
 #include <utility>
+#ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
+#endif
+
+#ifdef Q_OS_ANDROID
+namespace {
+void UpdateMaximum(std::atomic<uint64_t> &value, uint64_t candidate) noexcept
+{
+    auto current = value.load(std::memory_order_relaxed);
+    while (candidate > current &&
+           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+}
+void UpdateMaximumSize(std::atomic<size_t> &value, size_t candidate) noexcept
+{
+    auto current = value.load(std::memory_order_relaxed);
+    while (candidate > current &&
+           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+}
+void UpdateMinimum(std::atomic<size_t> &value, size_t candidate) noexcept
+{
+    auto current = value.load(std::memory_order_relaxed);
+    while (candidate < current &&
+           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+}
+void UpdateMaximumFloat(std::atomic<float> &value, float candidate) noexcept
+{
+    auto current = value.load(std::memory_order_relaxed);
+    while (candidate > current &&
+           !value.compare_exchange_weak(current, candidate, std::memory_order_relaxed)) {}
+}
+}
+#endif
 
 PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile)
     : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), profile(profile)
@@ -267,8 +299,37 @@ void PlaybackEngine::SetPlaybackVolume(float volume)
 void PlaybackEngine::threadWorker()
 {
     using namespace std::chrono_literals;
+#ifdef Q_OS_ANDROID
+    // Android gives normal app threads a lower scheduling class than its audio
+    // callback. Promote only this synthesis worker so UI activity cannot be
+    // the event that makes the producer run often enough.
+    {
+        QJniEnvironment env;
+        bool prioritySet = false;
+        jclass process = env->FindClass("android/os/Process");
+        if (process) {
+            jmethodID setPriority = env->GetStaticMethodID(process, "setThreadPriority", "(I)V");
+            if (setPriority) {
+                env->CallStaticVoidMethod(process, setPriority, -16); // THREAD_PRIORITY_AUDIO
+                prioritySet = !env->ExceptionCheck();
+            }
+            env->DeleteLocalRef(process);
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            Debug::print("Could not set Android audio thread priority");
+        } else if (prioritySet) {
+            Debug::print("Android synthesis thread priority set to THREAD_PRIORITY_AUDIO (-16)");
+        } else {
+            Debug::print("Android audio thread priority API unavailable");
+        }
+    }
+#endif
     try {
         std::vector<sample> silenceBuffer(ctx->mixer.GetSamplesPerBuffer());
+#ifdef Q_OS_ANDROID
+        auto lastProducedAt = std::chrono::steady_clock::now();
+#endif
         while (!playerThreadQuitRequest) {
             InvokeRun();
             if (playerThreadQuitRequest)
@@ -283,6 +344,12 @@ void PlaybackEngine::threadWorker()
                 continue;
             }
             try {
+#ifdef Q_OS_ANDROID
+                const auto startedAt = std::chrono::steady_clock::now();
+                UpdateMaximum(maxProducerGapNs, static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt - lastProducedAt).count()));
+                lastProducedAt = startedAt;
+#endif
                 if (paused) {
                     queue.Put(silenceBuffer);
                 } else {
@@ -291,6 +358,11 @@ void PlaybackEngine::threadWorker()
                     if (!queue.Put(ctx->masterAudioBuffer))
                         throw Xcept("Synthesis frame exceeds audio queue capacity");
                 }
+#ifdef Q_OS_ANDROID
+                UpdateMaximum(maxSynthesisNs, static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - startedAt).count()));
+#endif
                 if (ctx->SongEnded() && !songEnded) {
                     ctx->m4aMPlayAllStop();
                     ctx->m4aSoundClear();
@@ -393,12 +465,77 @@ void PlaybackEngine::InvokeRun()
 void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 {
     auto &self = *static_cast<PlaybackEngine *>(user);
-    self.callbackFrames.store(std::max<size_t>(1, output.size() / 2), std::memory_order_relaxed);
+#ifdef Q_OS_ANDROID
+    const auto startedAt = std::chrono::steady_clock::now();
+    const auto startedNs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt.time_since_epoch()).count());
+    const auto previousCallbackNs = self.lastCallbackStartNs.exchange(startedNs, std::memory_order_relaxed);
+    if (previousCallbackNs != 0 && startedNs >= previousCallbackNs)
+        UpdateMaximum(self.maxCallbackIntervalNs, startedNs - previousCallbackNs);
+    const size_t frames = output.size() / 2;
+    self.callbackFrames.store(std::max<size_t>(1, frames), std::memory_order_relaxed);
+    UpdateMinimum(self.minCallbackFrames, frames);
+    UpdateMaximumSize(self.maxCallbackFrames, frames);
+#endif
     self.queue.Take(output);
     const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
+#ifdef Q_OS_ANDROID
+    double sumSquares = 0.0;
+    float peak = 0.0f;
+    uint64_t clippedSamples = 0;
+    uint64_t finiteSamples = 0;
+    uint64_t nonFiniteSamples = 0;
+#endif
     for (size_t i = 0; i + 1 < output.size(); i += 2) {
         output[i] *= self.playerThreadVolumeCur;
         output[i + 1] *= self.playerThreadVolumeCur;
+#ifdef Q_OS_ANDROID
+        for (const float value : {output[i], output[i + 1]}) {
+            if (std::isfinite(value)) {
+                sumSquares += static_cast<double>(value) * value;
+                peak = std::max(peak, std::abs(value));
+                clippedSamples += static_cast<uint64_t>(std::abs(value) >= 1.0f);
+                ++finiteSamples;
+            } else {
+                ++nonFiniteSamples;
+            }
+        }
+#endif
         self.playerThreadVolumeCur += self.volumeRampCoeff * (target - self.playerThreadVolumeCur);
     }
+#ifdef Q_OS_ANDROID
+    self.callbackSumSquaresScaled.fetch_add(static_cast<uint64_t>(sumSquares * 1.0e9), std::memory_order_relaxed);
+    self.callbackSampleCount.fetch_add(finiteSamples, std::memory_order_relaxed);
+    UpdateMaximumFloat(self.callbackPeak, peak);
+    self.callbackClippedSamples.fetch_add(clippedSamples, std::memory_order_relaxed);
+    self.callbackNonFiniteSamples.fetch_add(nonFiniteSamples, std::memory_order_relaxed);
+    UpdateMaximum(self.maxCallbackNs, static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - startedAt).count()));
+#endif
+}
+
+PlaybackEngine::AudioDiagnostics PlaybackEngine::TakeAudioDiagnostics() noexcept
+{
+#ifdef Q_OS_ANDROID
+    const uint64_t squares = callbackSumSquaresScaled.exchange(0, std::memory_order_relaxed);
+    const uint64_t samples = callbackSampleCount.exchange(0, std::memory_order_relaxed);
+    const size_t minFrames = minCallbackFrames.exchange(static_cast<size_t>(-1), std::memory_order_relaxed);
+    return {
+        queue.TakeDiagnostics(),
+        maxSynthesisNs.exchange(0, std::memory_order_relaxed),
+        maxProducerGapNs.exchange(0, std::memory_order_relaxed),
+        maxCallbackNs.exchange(0, std::memory_order_relaxed),
+        maxCallbackIntervalNs.exchange(0, std::memory_order_relaxed),
+        minFrames == static_cast<size_t>(-1) ? 0 : minFrames,
+        maxCallbackFrames.exchange(0, std::memory_order_relaxed),
+        samples ? std::sqrt(static_cast<double>(squares) /
+                            (1.0e9 * static_cast<double>(samples))) : 0.0,
+        callbackPeak.exchange(0.0f, std::memory_order_relaxed),
+        callbackClippedSamples.exchange(0, std::memory_order_relaxed),
+        callbackNonFiniteSamples.exchange(0, std::memory_order_relaxed)
+    };
+#else
+    return {};
+#endif
 }

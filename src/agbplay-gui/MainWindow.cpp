@@ -1291,6 +1291,27 @@ void MainWindow::UpdateMute(size_t trackNo, bool audible, bool visualOnly)
 void MainWindow::StatusUpdate()
 {
     if (playbackEngine) {
+#ifdef Q_OS_ANDROID
+        static auto lastAudioReport = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastAudioReport >= std::chrono::seconds(5)) {
+            const auto d = playbackEngine->TakeAudioDiagnostics();
+            Debug::print("Android audio (5s): underrun callbacks={}, missing frames={}, "
+                         "queue min/max={} / {} frames, callbacks={}..{} frames, "
+                         "output RMS/peak={:.6f}/{:.6f}, clipped/nonfinite samples={}/{}, max synth={} ms, "
+                         "producer gap={} ms, callback interval={} ms, callback={} ms",
+                         d.queue.underrunCallbacks, d.queue.underrunFrames,
+                         d.queue.minQueued, d.queue.maxQueued,
+                         d.minCallbackFrames, d.maxCallbackFrames,
+                         d.outputRms, d.outputPeak,
+                         d.clippedSamples, d.nonFiniteSamples,
+                         static_cast<double>(d.maxSynthesisNs) / 1.0e6,
+                         static_cast<double>(d.maxProducerGapNs) / 1.0e6,
+                         static_cast<double>(d.maxCallbackIntervalNs) / 1.0e6,
+                         static_cast<double>(d.maxCallbackNs) / 1.0e6);
+            lastAudioReport = now;
+        }
+#endif
         const auto error = playbackEngine->TakeError();
         if (!error.empty()) {
             playing = false;

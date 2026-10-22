@@ -6,6 +6,7 @@
 #include <QAudioSink>
 #include <QMediaDevices>
 #include <QIODevice>
+#include "Debug.hpp"
 #ifdef Q_OS_ANDROID
 #include <QCoreApplication>
 #include <QJniObject>
@@ -59,7 +60,9 @@ public:
         if (device.isNull() || !device.isFormatSupported(format))
             throw Xcept("Audio device does not support {} Hz float stereo; choose a supported sample rate", rate);
         sink = std::make_unique<QAudioSink>(device, format);
+#if QT_VERSION < QT_VERSION_CHECK(6, 11, 0)
         sink->setBufferSize(static_cast<qsizetype>(rate / 50) * 8); // 20 ms request; backend may adjust
+#endif
 #if QT_VERSION >= QT_VERSION_CHECK(6, 11, 0)
         sink->start([context, render](QSpan<float> samples) noexcept {
             render(context, {samples.data(), static_cast<size_t>(samples.size())});
@@ -69,6 +72,11 @@ public:
 #endif
         if (sink->error() != QAudio::NoError)
             throw Xcept("Qt could not start audio output (error {})", static_cast<int>(sink->error()));
+        Debug::print("Qt audio output: device='{}', requested={} Hz / 2 channels / float32, "
+                     "QAudioSink format={} Hz / {} channels / format={}, reported buffer={} bytes, volume={:.3f}",
+                     device.description().toStdString(), rate, sink->format().sampleRate(),
+                     sink->format().channelCount(), static_cast<int>(sink->format().sampleFormat()),
+                     sink->bufferSize(), sink->volume());
 #ifdef Q_OS_ANDROID
         focus = QJniObject("org/agbplay/android/AudioFocus", "(Landroid/content/Context;)V",
                            QNativeInterface::QAndroidApplication::context().object());
