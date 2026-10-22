@@ -8,7 +8,7 @@ work=${QT_SOURCE_WORK:-"${TMPDIR:-/tmp}/agbplay-qt-toolchain"}
 version=6.11.2
 mkdir -p "$work/src"
 work=$(cd "$work" && pwd)
-for module in qtbase qtmultimedia; do
+for module in qtbase qtshadertools qtmultimedia; do
     if [[ ! -f "$work/src/$module-$version/CMakeLists.txt" ]]; then
         curl -fL "https://codeload.github.com/qt/$module/tar.gz/refs/tags/v$version" |
             tar -xz -C "$work/src"
@@ -17,10 +17,17 @@ done
 cmake -S "$work/src/qtbase-$version" -B "$work/build-host" -G Ninja \
     -DCMAKE_INSTALL_PREFIX="$work/host" -DCMAKE_BUILD_TYPE=Release \
     -DQT_BUILD_TESTS=OFF -DQT_BUILD_EXAMPLES=OFF \
-    -DFEATURE_gui=OFF -DFEATURE_widgets=OFF -DFEATURE_icu=OFF -DFEATURE_dbus=OFF \
+    -DFEATURE_widgets=OFF -DFEATURE_opengl=OFF -DFEATURE_icu=OFF -DFEATURE_dbus=OFF \
     -DFEATURE_sql=OFF -DFEATURE_testlib=OFF -DFEATURE_network=OFF
 cmake --build "$work/build-host" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
 cmake --install "$work/build-host"
+# ShaderTools provides the host qsb used by Multimedia's precompiled video shaders.
+# QAudioSink itself does not use those shaders, but the complete module builds them.
+cmake -S "$work/src/qtshadertools-$version" -B "$work/build-shadertools-host" -G Ninja \
+    -DCMAKE_PREFIX_PATH="$work/host" -DCMAKE_INSTALL_PREFIX="$work/host" \
+    -DCMAKE_BUILD_TYPE=Release -DQT_BUILD_TESTS=OFF -DQT_BUILD_EXAMPLES=OFF
+cmake --build "$work/build-shadertools-host" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
+cmake --install "$work/build-shadertools-host"
 cmake -S "$work/src/qtbase-$version" -B "$work/build-android" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON \
@@ -30,6 +37,11 @@ cmake -S "$work/src/qtbase-$version" -B "$work/build-android" -G Ninja \
     -DFEATURE_sql=OFF -DFEATURE_testlib=OFF -DFEATURE_dbus=OFF -DFEATURE_icu=OFF -DFEATURE_openssl=OFF
 cmake --build "$work/build-android" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
 cmake --install "$work/build-android"
+mkdir -p "$work/build-shadertools-android"
+(cd "$work/build-shadertools-android" && "$work/android/bin/qt-configure-module" "$work/src/qtshadertools-$version" -- \
+    -DQT_BUILD_TESTS=OFF -DQT_BUILD_EXAMPLES=OFF)
+cmake --build "$work/build-shadertools-android" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-3}"
+cmake --install "$work/build-shadertools-android"
 mkdir -p "$work/build-multimedia"
 (cd "$work/build-multimedia" && "$work/android/bin/qt-configure-module" "$work/src/qtmultimedia-$version" -- -DFEATURE_ffmpeg=OFF -DFEATURE_gstreamer=OFF \
     -DFEATURE_spatialaudio=OFF -DQT_BUILD_TESTS=OFF -DQT_BUILD_EXAMPLES=OFF)

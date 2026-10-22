@@ -9,8 +9,9 @@ Instalar CMake >=3.22, Ninja, Git, JDK 21, Android SDK y NDK 27.2.12479018.
 El SDK necesita `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`.
 Instalar Qt **6.11.2 para Android arm64-v8a**, incluyendo Qt Multimedia y las
 herramientas host de la misma versión. Se puede usar el instalador oficial o
-construir ambos módulos con `scripts/build-qt-source.sh` (descarga fuentes
-oficiales, sin copiarlas al repositorio). No hacen falta Qt Quick/QML ni FFmpeg
+construir Qt Base, ShaderTools y Multimedia con `scripts/build-qt-source.sh` (descarga fuentes
+oficiales, sin copiarlas al repositorio). ShaderTools aporta qsb para construir
+el módulo Multimedia completo. No hacen falta Qt Quick/QML ni FFmpeg
 para QAudioSink/AAudio.
 
 ```bash
@@ -91,3 +92,13 @@ exportación y compartir, llamadas/foco de audio, Bluetooth/USB/auriculares,
 Home/resume, bloqueo/desbloqueo, rotación, cierre por presión de memoria y
 consumo prolongado. Medir underruns, latencia y batería; comparar grabaciones
 con escritorio a igual perfil/frecuencia. Un APK compilado no demuestra esas pruebas.
+
+Para verificar un APK sin instalarlo:
+
+```bash
+python3 scripts/verify-apk.py path/to/agbplay-gui-debug.apk
+"$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose path/to/agbplay-gui-debug.apk
+```
+
+El primer comando comprueba bibliotecas exclusivamente AArch64 y alineación ELF
+de 16 KiB. El segundo verifica la firma. Ninguno ejecuta el audio o la interfaz.
