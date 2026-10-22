@@ -178,6 +178,13 @@ La configuración de escritorio conserva PortAudio como backend predeterminado.
 
 ## Audio en Android y telemetría
 
+Desde 1.0.9, la reproducción continúa al pulsar Inicio o apagar la pantalla.
+Un servicio Android `mediaPlayback` muestra los controles en una notificación
+multimedia y mantiene la CPU activa sólo mientras se reproduce. La pérdida de
+foco, pausa, parada y cierre gestionan la salida sin depender de la visibilidad
+de la Activity. Véase [reproducción en segundo plano](BACKGROUND-AUDIO.md) para
+el ciclo de vida, pruebas y límites.
+
 Qt Multimedia 6.11 usa `QAudioSink` con su callback `QSpan<float>` sobre AAudio.
 El callback consume float32 estéreo intercalado de la cola SPSC; el motor
 MP2K/M4A y sus remuestreadores son los mismos que en PortAudio. La síntesis se

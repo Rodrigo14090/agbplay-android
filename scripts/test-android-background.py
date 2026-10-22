@@ -34,6 +34,13 @@ def snapshot(name):
     (OUT / f"{name}-power.txt").write_bytes(adb("shell", "dumpsys", "power"))
     return value
 
+def active_wake_locks():
+    power = adb("shell", "dumpsys", "power").decode()
+    assert "Wake Locks:" in power and "Suspend Blockers:" in power, power
+    # Android 15 also prints a historical Wake Lock Log, including released
+    # locks. Only the active list represents current CPU ownership.
+    return power.split("Wake Locks:", 1)[1].split("Suspend Blockers:", 1)[0]
+
 def continuous(name, seconds=12):
     first = wait_for(lambda s: s["playing"] and s["rms"] > 0.00001)
     deadline = time.monotonic() + seconds
@@ -45,6 +52,7 @@ def continuous(name, seconds=12):
     assert last["sequence"] > first["sequence"] + seconds, (first, last)  # Qt event loop alive
     assert last["frames"] > first["frames"] + seconds * 24000, (first, last)
     assert last["rms"] > 0.00001, last
+    assert "agbplay:playback" in active_wake_locks()
     print(f"PASS {name}: frames {first['frames']}..{last['frames']}, RMS={last['rms']}, underruns={last['underruns']}", flush=True)
 
 def media(key):
@@ -57,8 +65,8 @@ def paused(name):
     time.sleep(2)
     last = snapshot(name)
     assert last["frames"] == first["frames"], (first, last)
-    power = adb("shell", "dumpsys", "power").decode()
-    assert "agbplay:playback" not in power, power
+    locks = active_wake_locks()
+    assert "agbplay:playback" not in locks, locks
     print(f"PASS {name}: paused callback count and released CPU wake lock", flush=True)
 
 def main():
@@ -77,8 +85,11 @@ def main():
         adb("shell", "input", "keyevent", "KEYCODE_HOME")
         wait_for(lambda s: s["applicationState"] != 4)
         continuous("home")
+        assert state()["uiTaskRuns"] == 0, state()
         adb("shell", "input", "keyevent", "KEYCODE_SLEEP")
         continuous("screen-off")
+        power = adb("shell", "dumpsys", "power").decode()
+        assert "mWakefulness=Asleep" in power or "mWakefulness=Dozing" in power, power
         media("pause")
         paused("media-pause")
         media("play")
@@ -96,10 +107,17 @@ def main():
         assert not state()["playing"], state()  # permanent loss must never auto-resume
         media("play")
         continuous("explicit-focus-resume", 4)
+        for _ in range(5):
+            media("pause")
+            media("play")
+        wait_for(lambda s: s["playing"] and s["rms"] > 0.00001)
         media("stop")
         paused("media-stop")
         services = adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         assert "PlaybackService" not in services, services
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
+        wait_for(lambda s: s["uiTaskRuns"] == 1 and s["applicationState"] == 4)
+        print("PASS deferred UI: control loop runs hidden, UI completion waits for foreground", flush=True)
         print("PASS background lifecycle: service/notification controls, focus and safe stop", flush=True)
     finally:
         (OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))

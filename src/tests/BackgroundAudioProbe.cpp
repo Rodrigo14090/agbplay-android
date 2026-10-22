@@ -11,6 +11,7 @@
 #include <fstream>
 
 class BackgroundAudioProbe {
+    static inline int uiTaskRuns = 0;
 public:
     static void start(MainWindow &window) {
         const auto directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -27,6 +28,13 @@ public:
             window.LoadSong("Synthetic background music", 0);
             window.Play();
         }
+        QObject::connect(qApp, &QGuiApplication::applicationStateChanged, &window,
+            [&window, queued = false](Qt::ApplicationState state) mutable {
+                if (state != Qt::ApplicationActive && !queued) {
+                    queued = true;
+                    window.RunWhenActive([] { ++uiTaskRuns; });
+                }
+            });
         auto *report = new QTimer(&window);
         QObject::connect(report, &QTimer::timeout, &window,
             [&window, directory, frames = uint64_t(0), callbacks = uint64_t(0), underruns = uint64_t(0), serial = 0]() mutable {
@@ -44,8 +52,10 @@ public:
                     {"playing", window.playing}, {"applicationState", int(qApp->applicationState())},
                     {"frames", double(frames)}, {"callbacks", double(callbacks)}, {"underruns", double(underruns)},
                     {"rms", rms}, {"error", QString::fromStdString(error)}};
+                QJsonObject result = state;
+                result["uiTaskRuns"] = uiTaskRuns;
                 QSaveFile file(directory + "/background-probe.json");
-                if (file.open(QIODevice::WriteOnly)) { file.write(QJsonDocument(state).toJson()); file.commit(); }
+                if (file.open(QIODevice::WriteOnly)) { file.write(QJsonDocument(result).toJson()); file.commit(); }
             });
         report->start(500);
     }

@@ -11,6 +11,7 @@
 #include <memory>
 #include <thread>
 #include <functional>
+#include <vector>
 class QProgressDialog;
 namespace Gsf { struct Song; }
 namespace DocumentAccess { struct FolderDocument; }
@@ -79,6 +80,10 @@ private:
     void ImportGsfPaths(const std::vector<std::filesystem::path> &paths);
     void ApplyGsfPlaylist(const std::vector<Gsf::Song> &songs, bool replaceWithoutPrompt);
     void RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task);
+    void RunWhenActive(std::function<void()> task);
+#ifdef Q_OS_ANDROID
+    std::vector<std::function<void()>> deferredUiTasks;
+#endif
     void OpenDocuments(const std::vector<std::filesystem::path> &paths,
                        const std::vector<Gsf::Song> *automaticPlaylist = nullptr);
     void LoadGsfFolder();

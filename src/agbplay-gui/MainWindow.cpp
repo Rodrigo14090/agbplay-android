@@ -42,9 +42,11 @@
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QTextDocument>
 #include <QToolBar>
 #include <thread>
 #include <tuple>
+#include <utility>
 
 MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(parent)
 {
@@ -62,8 +64,13 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
 #ifdef Q_OS_ANDROID
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         // Keep the Qt control plane alive, but never paint a suspended surface.
-        setUpdatesEnabled(state == Qt::ApplicationActive);
+        for (auto *window : QApplication::topLevelWidgets())
+            window->setUpdatesEnabled(state == Qt::ApplicationActive);
         statusUpdateTimer.setInterval(state == Qt::ApplicationActive ? 16 : 250);
+        if (state == Qt::ApplicationActive) QTimer::singleShot(0, this, [this] {
+            auto tasks = std::exchange(deferredUiTasks, {});
+            for (auto &task : tasks) RunWhenActive(std::move(task));
+        });
         if (state != Qt::ApplicationActive && settings && settings->dirty)
             settings->Save();
     });
@@ -82,6 +89,7 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     settings->dirty = false;
 
 #ifdef Q_OS_ANDROID
+    logWidget.document()->setMaximumBlockCount(2000);
     androidPlayback = std::make_unique<AndroidPlayback>(this);
     connect(androidPlayback.get(), &AndroidPlayback::command, this, &MainWindow::AndroidPlaybackCommand);
     connect(androidPlayback.get(), &AndroidPlayback::error, this, [this](const QString &message) {
@@ -816,7 +824,8 @@ void MainWindow::RunImport(std::function<std::function<void()>(const std::functi
         QString error;
         try { finish = task([cancelled] { return cancelled->load(); }); }
         catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
-        QMetaObject::invokeMethod(this, [this, finish = std::move(finish), error, cancelled] {
+        QMetaObject::invokeMethod(this, [this, finish = std::move(finish), error, cancelled]() mutable {
+            RunWhenActive([this, finish = std::move(finish), error, cancelled] {
             importBusy = false;
             disconnect(importProgress, nullptr, this, nullptr);
             importProgress->close();
@@ -826,8 +835,20 @@ void MainWindow::RunImport(std::function<std::function<void()>(const std::functi
             if (!error.isEmpty()) { MBoxError("Document import", error.toStdString()); return; }
             try { if (finish) finish(); }
             catch (const std::exception &e) { MBoxError("Document import", e.what()); }
+            });
         }, Qt::QueuedConnection);
     });
+}
+
+void MainWindow::RunWhenActive(std::function<void()> task)
+{
+#ifdef Q_OS_ANDROID
+    if (qApp->applicationState() != Qt::ApplicationActive) {
+        deferredUiTasks.push_back(std::move(task));
+        return;
+    }
+#endif
+    task();
 }
 
 void MainWindow::ImportGsfPaths(const std::vector<std::filesystem::path> &paths)
@@ -1440,18 +1461,22 @@ int MainWindow::AskSaveProfile()
 
 void MainWindow::MBoxInfo(const std::string &title, const std::string &msg)
 {
+    RunWhenActive([this, title, msg] {
     const QString qtitle = QString::fromStdString(title);
     const QString qmsg = QString::fromStdString(msg);
     QMessageBox mbox(QMessageBox::Icon::Information, qtitle, qmsg, QMessageBox::Ok, this);
     mbox.exec();
+    });
 }
 
 void MainWindow::MBoxError(const std::string &title, const std::string &msg)
 {
+    RunWhenActive([this, title, msg] {
     const QString qtitle = QString::fromStdString(title);
     const QString qmsg = QString::fromStdString(msg);
     QMessageBox mbox(QMessageBox::Icon::Critical, qtitle, qmsg, QMessageBox::Ok, this);
     mbox.exec();
+    });
 }
 
 float MainWindow::ConvertSliderVolume(int value)
