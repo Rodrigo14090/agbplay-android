@@ -80,6 +80,34 @@ SongWidget::SongWidget(QWidget *parent) : QWidget(parent)
     reset();
 }
 
+void SongWidget::setTouchLayout()
+{
+    // Keep every readout, while allowing long song names and narrow viewports.
+    for (auto *row : {&upperLayout, &lowerLayout})
+        while (auto *item = row->takeAt(0))
+            delete item;
+    for (auto *label : {&titleLabel, &bpmLabel, &bpmFactorLabel, &chnLabel, &timeLabel, &chordLabel}) {
+        label->setMinimumSize(0, 0);
+        label->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    }
+    setMinimumHeight(116);
+    setMaximumHeight(QWIDGETSIZE_MAX);
+    titleLabel.setWordWrap(true);
+    titleLabel.setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    keyboardWidget.setMinimumWidth(0);
+    keyboardWidget.setMaximumWidth(QWIDGETSIZE_MAX);
+    auto *grid = new QGridLayout;
+    grid->setContentsMargins(6, 4, 6, 4);
+    grid->addWidget(&titleLabel, 0, 0, 1, 4);
+    grid->addWidget(&bpmLabel, 1, 0);
+    grid->addWidget(&bpmFactorLabel, 1, 1);
+    grid->addWidget(&chnLabel, 1, 2);
+    grid->addWidget(&timeLabel, 1, 3);
+    grid->addWidget(&chordLabel, 2, 0);
+    grid->addWidget(&keyboardWidget, 2, 1, 1, 3);
+    layout.addLayout(grid);
+}
+
 SongWidget::~SongWidget()
 {
 }

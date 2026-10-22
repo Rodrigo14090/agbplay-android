@@ -18,6 +18,21 @@ jobs:
           fetch-depth: 0
       - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libboost-dev libfmt-dev nlohmann-json3-dev libzip-dev libsndfile1-dev zlib1g-dev portaudio19-dev libportaudiocpp0
       - run: ./scripts/test-host.sh -DENABLE_ADDRESS_SANITIZER=${{ matrix.sanitizer }}
+  touch-ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libboost-dev libfmt-dev nlohmann-json3-dev libzip-dev libsndfile1-dev zlib1g-dev portaudio19-dev libportaudiocpp0 qt6-base-dev fonts-dejavu-core
+      - name: Test responsive Qt Widgets UI offscreen
+        env:
+          AGBPLAY_UI_CAPTURE_DIR: ${{ runner.temp }}/ui-captures
+        run: ./scripts/test-host.sh -DAGBPLAY_BUILD_GUI=ON
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: responsive-ui-captures
+          path: ${{ runner.temp }}/ui-captures/*.png
+          if-no-files-found: warn
   android:
     runs-on: ubuntu-24.04
     steps:

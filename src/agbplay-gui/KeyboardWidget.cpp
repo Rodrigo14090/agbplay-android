@@ -43,6 +43,7 @@ void KeyboardWidget::paintEvent(QPaintEvent *paintEvent)
     (void)paintEvent;
 
     QPainter painter{this};
+    painter.scale(static_cast<qreal>(width()) / KEYBOARD_WIDTH, 1.0);
 
     static const std::array<uint8_t, 7> W_KEY_TABLE{0, 2, 4, 5, 7, 9, 11};
     static const std::array<uint8_t, 5> B_KEY_TABLE{1, 3, 6, 8, 10};

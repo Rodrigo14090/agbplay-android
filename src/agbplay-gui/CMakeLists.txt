@@ -19,7 +19,12 @@ if(WIN32)
     FILE(GLOB_RECURSE AGBPLAY_GUI_WIN32_RC "${CMAKE_CURRENT_LIST_DIR}/*.rc")
 endif()
 
-qt_add_executable(agbplay-gui MANUAL_FINALIZATION WIN32 ${AGBPLAY_GUI_SOURCES} ${AGBPLAY_GUI_HEADERS} ${AGBPLAY_GUI_UIS} ${AGBPLAY_GUI_QRC} ${AGBPLAY_GUI_WIN32_RC})
+list(REMOVE_ITEM AGBPLAY_GUI_SOURCES "${CMAKE_CURRENT_LIST_DIR}/main.cpp")
+add_library(agbplay-ui STATIC ${AGBPLAY_GUI_SOURCES} ${AGBPLAY_GUI_HEADERS} ${AGBPLAY_GUI_UIS})
+target_include_directories(agbplay-ui PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+target_link_libraries(agbplay-ui PUBLIC agbplay agbplay-util Qt6::Core Qt6::Widgets)
+target_compile_options(agbplay-ui PRIVATE -Wall -Wextra -Wconversion)
+qt_add_executable(agbplay-gui MANUAL_FINALIZATION WIN32 main.cpp ${AGBPLAY_GUI_QRC} ${AGBPLAY_GUI_WIN32_RC})
 if(AGBPLAY_QT_AUDIO)
     target_compile_definitions(agbplay-gui PRIVATE AGBPLAY_QT_AUDIO=1)
 else()
@@ -33,20 +38,22 @@ if(ANDROID)
         QT_ANDROID_APP_NAME "agbplay"
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35
-        QT_ANDROID_VERSION_CODE 1
-        QT_ANDROID_VERSION_NAME "1.0.0-android-dev")
+        QT_ANDROID_VERSION_CODE 2
+        QT_ANDROID_VERSION_NAME "1.0.1-android-dev")
 endif()
 
 target_compile_options(agbplay-gui PRIVATE -Wall -Wextra -Wconversion)
 
 
 
-target_link_libraries(agbplay-gui
-    PRIVATE
-    agbplay
-    agbplay-util
-    Qt6::Core
-    Qt6::Widgets
-)
+target_link_libraries(agbplay-gui PRIVATE agbplay-ui)
+
+if(BUILD_TESTING AND NOT ANDROID)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(test-touch-ui ../tests/TestTouchUi.cpp ${AGBPLAY_GUI_QRC})
+    target_link_libraries(test-touch-ui PRIVATE agbplay-ui Qt6::Test)
+    add_test(NAME touch-ui COMMAND test-touch-ui)
+    set_tests_properties(touch-ui PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
 
 qt_finalize_executable(agbplay-gui)

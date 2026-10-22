@@ -1,5 +1,7 @@
 #include "MainWindow.hpp"
 #include "DocumentAccess.hpp"
+#include "TouchPlayerLayout.hpp"
+#include <QToolButton>
 #include <QApplication>
 #include <QScroller>
 
@@ -39,32 +41,15 @@
 #include <thread>
 #include <tuple>
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
+MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(parent)
 {
     SetupMenuBar();
     SetupToolBar();
     SetupWidgets();
     SetupStatusBar();
+    if (touchInterface)
+        SetupTouchInterface();
 #ifdef Q_OS_ANDROID
-    // Keep the original editor and controls, stacked for a phone in portrait.
-    containerCentralSplitter.setOrientation(Qt::Vertical);
-    containerStatusInfoSplitter.setOrientation(Qt::Vertical);
-    infoWidget.setMaximumWidth(QWIDGETSIZE_MAX);
-    logWidget.hide();
-    statusWidgetScrollArea.setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    for (auto *button : findChildren<QPushButton *>()) {
-        button->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
-        button->setMinimumSize(44, 44);
-    }
-    for (auto *list : {&songlistWidget.listWidget, &playlistWidget.listWidget}) {
-        list->setStyleSheet("QListWidget::item { min-height: 44px; }");
-        QScroller::grabGesture(list->viewport(), QScroller::TouchGesture);
-    }
-    QScroller::grabGesture(statusWidgetScrollArea.viewport(), QScroller::TouchGesture);
-    connect(&songlistWidget.listWidget, &QAbstractItemView::clicked, this,
-            [this](const QModelIndex &index) { SonglistSwitchSong(index.row()); });
-    connect(&playlistWidget.listWidget, &QAbstractItemView::clicked, this,
-            [this](const QModelIndex &index) { PlaylistSwitchSong(index.row()); });
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
         if (playbackEngine)
             playbackEngine->SuspendOutput(state != Qt::ApplicationActive);
@@ -130,10 +115,12 @@ void MainWindow::SetupMenuBar()
     /* File */
     QMenu *fileMenu = menuBar()->addMenu("&File");
 
-    QAction *fileOpenRom = fileMenu->addAction("Open ROM/GSF");
-    fileOpenRom->setIcon(QIcon(":/icons/open-rom.ico"));
-    fileOpenRom->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_O));
-    connect(fileOpenRom, &QAction::triggered, [this](bool) { LoadGame(); });
+    openRomAction = fileMenu->addAction("Open ROM/GSF");
+    openRomAction->setObjectName("openRomAction");
+    openRomAction->setIcon(QIcon(":/icons/open-rom.ico"));
+    openRomAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_O));
+    connect(openRomAction, &QAction::triggered, this, &MainWindow::OpenRomRequested);
+    connect(this, &MainWindow::OpenRomRequested, this, &MainWindow::LoadGame);
 
     fileMenu->addSeparator();
 
@@ -399,6 +386,116 @@ void MainWindow::SetupWidgets()
     LogAppend("agbplay ready!");
 
     centralWidget()->show();
+}
+
+void MainWindow::SetupTouchInterface()
+{
+    for (auto *toolbar : findChildren<QToolBar *>()) {
+        // Release QWidgetActions before moving their widgets; otherwise the
+        // toolbar continues managing their visibility and geometry.
+        for (auto *action : toolbar->actions())
+            toolbar->removeAction(action);
+        toolbar->hide();
+    }
+    auto *controls = new TouchControlRows(this);
+    controls->setObjectName("touchControls");
+    auto *headerRow = new QWidget(controls);
+    auto *transportRow = new QWidget(controls);
+    auto *levelsRow = new QWidget(controls);
+    auto *header = new QHBoxLayout(headerRow);
+    header->setContentsMargins(0, 0, 0, 0);
+    auto *open = new QPushButton(QIcon(":/icons/open-rom.ico"), "Abrir ROM/GSF", controls);
+    open->setObjectName("openRomButton");
+    open->setAccessibleName("Abrir ROM/GSF");
+    open->setMinimumHeight(48);
+    connect(open, &QPushButton::clicked, openRomAction, &QAction::trigger);
+    header->addWidget(open, 1);
+    auto *menu = new QToolButton(controls);
+    menu->setObjectName("touchMenuButton");
+    menu->setText("Menú");
+    menu->setAccessibleName("Menú de agbplay");
+    menu->setMinimumSize(64, 48);
+    menu->setPopupMode(QToolButton::InstantPopup);
+    auto *popup = new QMenu(menu);
+    for (auto *action : menuBar()->actions())
+        if (action->menu())
+            popup->addMenu(action->menu());
+    popup->addAction("Ir a canción…", this, [this] { JumpSong(); });
+    for (auto *submenu : findChildren<QMenu *>())
+        submenu->setStyleSheet("QMenu::item { min-height: 48px; }");
+    menu->setMenu(popup);
+    header->addWidget(menu);
+    menuBar()->hide();
+
+    auto *transport = new QHBoxLayout(transportRow);
+    transport->setContentsMargins(0, 0, 0, 0);
+    transport->setSpacing(4);
+    const std::array<QPushButton *, 5> buttons{&prevButton, &stopButton, &playButton, &pauseButton, &nextButton};
+    const std::array<QString, 5> names{"Anterior", "Detener", "Reproducir", "Pausa", "Siguiente"};
+    for (size_t i = 0; i < buttons.size(); ++i) {
+        auto *button = buttons[i];
+        button->setMaximumSize(QWIDGETSIZE_MAX, 48);
+        button->setMinimumSize(48, 48);
+        button->setToolTip(names[i]);
+        button->setAccessibleName(names[i]);
+        transport->addWidget(button, 1);
+        button->show();
+    }
+    auto *levels = new QHBoxLayout(levelsRow);
+    levels->setContentsMargins(0, 0, 0, 0);
+    for (auto *button : {&speedHalveButton, &speedDoubleButton}) {
+        button->setFixedSize(48, 48);
+        button->setText(button == &speedHalveButton ? "½×" : "2×");
+        button->setIcon(QIcon());
+        button->setAccessibleName(button == &speedHalveButton ? "Reducir velocidad" : "Aumentar velocidad");
+        levels->addWidget(button);
+        button->show();
+    }
+    volumeSlider.setMinimumSize(80, 48);
+    volumeSlider.setMaximumSize(QWIDGETSIZE_MAX, 48);
+    volumeSlider.setAccessibleName("Volumen");
+    auto *volume = new QLabel(controls);
+    volume->setMinimumWidth(32);
+    connect(&volumeSlider, &QSlider::valueChanged, volume, [volume](int value) { volume->setText(QString::number(value)); });
+    volume->setText(QString::number(volumeSlider.value()));
+    levels->addWidget(&volumeSlider, 1);
+    volumeSlider.show();
+    levels->addWidget(volume);
+    controls->setRows({headerRow, transportRow, levelsRow});
+    // A heap-owned wrapper outlives all MainWindow value-member controls.
+    // Do not parent vuMeter to statusWidget: statusWidget is destroyed first.
+    auto *tracksPage = new QWidget(this);
+    auto *tracksLayout = new QVBoxLayout(tracksPage);
+    tracksLayout->setContentsMargins(0, 0, 0, 0);
+    tracksLayout->addWidget(&vuMeter, 0, Qt::AlignHCenter);
+    vuMeter.show();
+    tracksLayout->addWidget(&statusWidgetScrollArea, 1);
+    statusWidget.songWidget.setTouchLayout();
+    for (auto *track : statusWidget.findChildren<TrackWidget *>())
+        track->setTouchLayout();
+    statusWidgetScrollArea.setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    QScroller::grabGesture(statusWidgetScrollArea.viewport(), QScroller::TouchGesture);
+    for (auto *list : {&songlistWidget, &playlistWidget}) {
+        list->EnableTouchInterface();
+        // Activated is supplied by a single tap by Android's item view style.
+        // clicked is explicit here for consistent behaviour across Qt styles.
+        connect(&list->listWidget, &QAbstractItemView::clicked, this, [this, list](const QModelIndex &index) {
+            if (list == &songlistWidget) SonglistSwitchSong(index.row());
+            else PlaylistSwitchSong(index.row());
+        });
+    }
+    auto *infoScroll = new QScrollArea(this);
+    infoWidget.setMaximumWidth(QWIDGETSIZE_MAX);
+    infoScroll->setWidgetResizable(true);
+    infoScroll->setWidget(&infoWidget);
+    QScroller::grabGesture(infoScroll->viewport(), QScroller::TouchGesture);
+    QScroller::grabGesture(logWidget.viewport(), QScroller::TouchGesture);
+    auto *oldCentral = takeCentralWidget();
+    oldCentral->setParent(this);
+    oldCentral->hide();
+    auto *touch = new TouchPlayerLayout({&songlistWidget, &playlistWidget, tracksPage, infoScroll, &logWidget}, controls, this);
+    setCentralWidget(touch);
+    statusBar()->setSizeGripEnabled(false);
 }
 
 void MainWindow::SetupStatusBar()
@@ -759,7 +856,16 @@ void MainWindow::LoadGame()
 {
     QFileDialog fileDialog(this);
     fileDialog.setFileMode(QFileDialog::ExistingFile);
-    fileDialog.setNameFilter("GBA-ROMs (*.gba *.zip);;GSF-Lib (*.gsflib *.zip)");
+    fileDialog.setAcceptMode(QFileDialog::AcceptOpen);
+    fileDialog.setWindowTitle("Abrir ROM/GSF");
+#ifdef Q_OS_ANDROID
+    // Qt's Android platform plugin maps ExistingFile + AcceptOpen to SAF's
+    // ACTION_OPEN_DOCUMENT. Unknown GBA/GSF MIME types must remain selectable.
+    fileDialog.setOption(QFileDialog::DontUseNativeDialog, false);
+    fileDialog.setNameFilter("ROM/GSF/ZIP (*);;GBA (*.gba);;GSF (*.gsflib *.gsf);;ZIP (*.zip)");
+#else
+    fileDialog.setNameFilter("GBA-ROMs (*.gba *.zip);;GSF-Lib (*.gsflib *.gsf *.zip)");
+#endif
 
     if (!settings->lastOpenFileDirectory.empty())
         fileDialog.setDirectory(QString::fromStdWString(settings->lastOpenFileDirectory.wstring()));
@@ -770,7 +876,8 @@ void MainWindow::LoadGame()
     if (!CloseGame())
         return;
 
-    assert(fileDialog.selectedFiles().size() == 1);
+    if (fileDialog.selectedFiles().size() != 1)
+        return;
     std::filesystem::path selectedFile;
     try {
         selectedFile = DocumentAccess::LocalCopy(fileDialog.selectedFiles().at(0));
@@ -950,7 +1057,8 @@ void MainWindow::ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick
         if (!fileDialog.exec())
             return;
 
-        assert(fileDialog.selectedFiles().size() == 1);
+        if (fileDialog.selectedFiles().size() != 1)
+        return;
         directory = fileDialog.selectedFiles().at(0).toStdWString();
     }
 
@@ -1048,7 +1156,8 @@ void MainWindow::SaveLog()
     if (!fileDialog.exec())
         return;
 
-    assert(fileDialog.selectedFiles().size() == 1);
+    if (fileDialog.selectedFiles().size() != 1)
+        return;
 
     QFile output(fileDialog.selectedFiles().at(0));
     if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate) ||

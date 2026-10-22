@@ -32,7 +32,12 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    #ifdef Q_OS_ANDROID
+    static constexpr bool DefaultTouchInterface = true;
+#else
+    static constexpr bool DefaultTouchInterface = false;
+#endif
+    explicit MainWindow(QWidget *parent = nullptr, bool touchInterface = DefaultTouchInterface);
     ~MainWindow();
 
 private:
@@ -40,6 +45,7 @@ private:
     void SetupToolBar();
     void SetupWidgets();
     void SetupStatusBar();
+    void SetupTouchInterface();
 
     void Play();
     void Pause();
@@ -82,6 +88,7 @@ private:
 
 
     /* menu bar */
+    QAction *openRomAction = nullptr;
     QAction *exportSongsAction = nullptr;
     QAction *exportStemsAction = nullptr;
     QAction *quickExportSongAction = nullptr;
@@ -157,4 +164,5 @@ private:
 signals:
     /* Use a signal instead of QMetaObject::invokeMethod for pre Qt 6.7 compatibility. */
     void LogMessageReceived(const std::string &msg);
+    void OpenRomRequested();
 };

@@ -1,6 +1,9 @@
 #include "SonglistWidget.hpp"
 
 #include <QEvent>
+#include <QMenu>
+#include <QToolButton>
+#include <QScroller>
 #include <QInputDialog>
 
 SonglistWidget::SonglistWidget(const QString &titleString, bool editable, QWidget *parent) :
@@ -73,6 +76,44 @@ SonglistWidget::SonglistWidget(const QString &titleString, bool editable, QWidge
             return;
         emit PlayActionTriggered(row);
     });
+}
+
+void SonglistWidget::EnableTouchInterface()
+{
+    layout.setContentsMargins(4, 4, 4, 4);
+    addRemoveButton.setFixedSize(48, 48);
+    addRemoveButton.setAccessibleName(addRemoveButton.toolTip());
+    selectAllCheckBox.setFixedSize(48, 48);
+    selectAllCheckBox.setAccessibleName(selectAllCheckBox.toolTip());
+    listWidget.setStyleSheet("QListWidget::item { min-height: 48px; } QListWidget::indicator { width: 28px; height: 28px; }");
+    QScroller::grabGesture(listWidget.viewport(), QScroller::TouchGesture);
+    auto *more = new QToolButton(this);
+    more->setText("⋮");
+    more->setAccessibleName("Acciones de la lista");
+    more->setFixedSize(48, 48);
+    more->setPopupMode(QToolButton::InstantPopup);
+    auto *menu = new QMenu(more);
+    menu->addActions(listWidget.actions());
+    if (editable) {
+        for (int delta : {-1, 1}) {
+            auto *action = menu->addAction(delta < 0 ? "Subir canción" : "Bajar canción");
+            connect(action, &QAction::triggered, this, [this, delta] {
+                const int row = listWidget.currentRow();
+                const int target = row + delta;
+                if (row < 0 || target < 0 || target >= listWidget.count()) return;
+                const int playingRow = selectedSong;
+                auto *item = listWidget.takeItem(row);
+                listWidget.insertItem(target, item);
+                listWidget.setCurrentRow(target);
+                if (playingRow == row) selectedSong = target;
+                else if (playingRow == target) selectedSong = row;
+                emit ContentChanged();
+            });
+        }
+    }
+    menu->setStyleSheet("QMenu::item { min-height: 48px; }");
+    more->setMenu(menu);
+    titleBarLayout.addWidget(more);
 }
 
 SonglistWidget::~SonglistWidget()

@@ -41,11 +41,15 @@ El script conserva C++ optimizado (`Release`) y fuerza
 con la clave debug local. El resultado está en
 `build-android/artifacts/agbplay-android-arm64-debug.apk`. Nunca subir esa clave. Para distribuir una versión estable, firmar el
 APK de release con una clave propia y conservarla fuera de Git. Las claves
-debug de runners efímeros pueden cambiar entre compilaciones.
+debug de runners efímeros pueden cambiar entre compilaciones. Si Android rechaza
+la actualización por firma distinta (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`),
+no puede instalarse encima del primer APK: guardar los perfiles/exportaciones
+que se necesiten y desinstalar la versión anterior antes de instalar (se borran
+sus datos privados). No se publica ninguna clave en Git.
 
 ```bash
-adb install -r path/to/agbplay-gui-debug.apk
-./scripts/android-smoke.sh path/to/agbplay-gui-debug.apk
+adb install -r build-android/artifacts/agbplay-android-arm64-debug.apk
+./scripts/android-smoke.sh build-android/artifacts/agbplay-android-arm64-debug.apk
 ```
 
 ## Uso y almacenamiento
@@ -57,9 +61,29 @@ configuración se guardan mediante QStandardPaths en el espacio privado de la ap
 No se pide permiso de acceso general al almacenamiento.
 
 Se conservan listas, playlist, play/pause/stop, velocidad, volumen, mute/solo,
-perfiles y configuración. En teléfonos, las listas y controles son táctiles y
-las formas complejas tienen desplazamiento. La disposición visual sigue siendo
-una adaptación inicial; verificar en varias densidades y orientaciones.
+perfiles y configuración. El botón permanente **Abrir ROM/GSF** usa la misma
+acción que File > Open ROM/GSF. En Android se fuerza el diálogo nativo de Qt,
+que lanza `ACTION_OPEN_DOCUMENT` (SAF); la opción inicial permite cualquier tipo
+MIME para que los proveedores no oculten extensiones GBA/GSF desconocidas.
+
+La distribución usa el tamaño disponible del área central en coordenadas lógicas
+Qt, sin detectar categorías de dispositivo:
+
+- ancho menor de 840 o alto menor de 480: cinco pestañas (Canciones, Playlist,
+  Pistas, ROM, Log), con apertura, transporte, velocidad y volumen permanentes;
+- ancho de 840 a 1199 y alto de al menos 480: listas simultáneas a la izquierda,
+  pistas/información/log en pestañas a la derecha;
+- ancho de al menos 1200 y alto de al menos 480: listas, pistas e información/log
+  en tres paneles redimensionables con separadores táctiles.
+
+Rotar o cambiar el tamaño mueve los mismos widgets, conservando listas,
+selección y estado de reproducción. Las pistas muestran M/S/A de 48 unidades,
+datos técnicos y teclados que se ajustan al ancho, sin cambiar la síntesis.
+Las listas tienen filas de 48 unidades, casillas ampliadas y menú de acciones
+para reproducir, renombrar y subir/bajar entradas. El `+` sigue añadiendo a la
+playlist. **Menú** permite acceder a todos los menús originales, incluidos
+perfiles, exportación, preferencias y registro. Los formularios complejos tienen
+desplazamiento táctil. Escritorio conserva su interfaz predeterminada.
 
 Las exportaciones WAV y stems se generan en el directorio privado de exportación.
 `File > Share Exported WAV` abre el selector de compartir de Android mediante
@@ -82,6 +106,18 @@ AGBPLAY_BUILD_DIR="$PWD/build-asan" ./scripts/test-host.sh -DENABLE_ADDRESS_SANI
 cmake -S . -B build-desktop -G Ninja -DAGBPLAY_BUILD_CLI=OFF -DAGBPLAY_BUILD_NC=OFF
 cmake --build build-desktop
 ```
+
+Para ejecutar la regresión de interfaz y guardar capturas sin dispositivo:
+
+```bash
+AGBPLAY_BUILD_DIR="$PWD/build-ui" AGBPLAY_UI_CAPTURE_DIR="$PWD/build-ui/captures" \
+  ./scripts/test-host.sh -DAGBPLAY_BUILD_GUI=ON
+```
+
+`touch-ui` comprueba el botón de apertura, su separación del `+`, la conservación
+de estado durante 27 cambios de tamaño, geometría de controles de 48 unidades,
+vista de pistas sin desbordamiento horizontal y mute/solo con pestañas ocultas.
+Las capturas son renderizados Qt Widgets en Linux; no son capturas de Android.
 
 Para compilar también la salida Qt en Linux: `-DAGBPLAY_QT_AUDIO=ON` (Qt >=6.8).
 La configuración de escritorio conserva PortAudio como backend predeterminado.
