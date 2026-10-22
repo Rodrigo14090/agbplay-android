@@ -48,6 +48,27 @@ int main() {
         }
     }
     CHECK(energy > 0.01);
+    // Mutate engine tables, sequence bytes and sample headers, preserving a valid
+    // GBA header. Recoverable parser errors are expected; memory errors are not.
+    uint32_t random = 0x6d4a1234;
+    for (int mutation = 0; mutation < 200; ++mutation) {
+        auto damaged = Fixture::RomBytes();
+        for (int n = 0; n < 8; ++n) {
+            random = random * 1664525u + 1013904223u;
+            const auto offset = 0x200 + (random % 0x600);
+            damaged[offset] ^= static_cast<uint8_t>(random >> 24);
+        }
+        try {
+            auto mutatedRom = Rom::LoadFromBufferRef(damaged);
+            MP2KContext mutated(48000, 1, mutatedRom, profile.mp2kSoundModePlayback,
+                                profile.agbplaySoundMode, profile.songTableInfoPlayback,
+                                profile.playerTablePlayback);
+            mutated.m4aSongNumStart(0);
+            for (int frame = 0; frame < 32; ++frame) mutated.m4aSoundMain();
+        } catch (const std::exception &) {
+            // Expected: bad pointers, invalid sequence data, command-budget error.
+        }
+    }
     // Exercise FIFO order across repeated wraps and changing callback sizes.
     AudioFrameQueue queue;
     std::atomic<bool> done{false};

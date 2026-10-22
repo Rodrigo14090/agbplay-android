@@ -3,6 +3,7 @@
 #include "Xcept.hpp"
 
 #include <filesystem>
+#include <cstdlib>
 #include <iostream>
 
 #if defined(_WIN32)
@@ -96,6 +97,8 @@ const std::filesystem::path OS::GetMusicDirectory()
 
 const std::filesystem::path OS::GetLocalConfigDirectory()
 {
+    if (const char *config = std::getenv("XDG_CONFIG_HOME"); config && std::filesystem::path(config).is_absolute())
+        return std::filesystem::path(config);
     passwd *pw = getpwuid(getuid());
     if (!pw)
         throw Xcept("getpwuid failed: %s", strerror(errno));

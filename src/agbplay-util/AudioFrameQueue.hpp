@@ -12,6 +12,7 @@ class AudioFrameQueue
 public:
     static constexpr size_t Capacity = 32768;
     static_assert(std::atomic<size_t>::is_always_lock_free);
+    static_assert(std::atomic<float>::is_always_lock_free);
     size_t Queued() const noexcept
     {
         const auto w = write.load(std::memory_order_relaxed);

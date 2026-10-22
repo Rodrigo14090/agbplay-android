@@ -7,11 +7,13 @@ if(NOT AGBPLAY_FETCH_DEPENDENCIES)
     find_package(nlohmann_json REQUIRED)
     find_package(Boost CONFIG REQUIRED)
     find_package(fmt REQUIRED)
-    find_package(libzip REQUIRED)
+    pkg_check_modules(libzip REQUIRED IMPORTED_TARGET libzip)
+    set(AGBPLAY_ZIP PkgConfig::libzip)
     pkg_check_modules(sndfile REQUIRED IMPORTED_TARGET sndfile)
     find_package(ZLIB REQUIRED)
     set(AGBPLAY_SNDFILE PkgConfig::sndfile)
 else()
+    set(AGBPLAY_ZIP libzip::zip)
     set(AGBPLAY_SNDFILE SndFile::sndfile)
 endif()
 if(ANDROID)
@@ -61,7 +63,7 @@ target_link_libraries(agbplay
     PRIVATE
     Boost::boost
     ${AGBPLAY_SNDFILE}
-    libzip::zip
+    ${AGBPLAY_ZIP}
     ZLIB::ZLIB
     ${AGBPLAY_ADDITIONAL_LIBS}
 )
