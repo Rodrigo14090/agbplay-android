@@ -31,7 +31,8 @@ public:
         rom[0x50a] = 0xb2; // positive-time musical loop, not a busy GOTO
         Fixture::Put32(rom, 0x50b, 0x08000500);
         std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char *>(rom.data()), rom.size());
-        const auto intent = QNativeInterface::QAndroidApplication::context().callObjectMethod("getIntent", "()Landroid/content/Intent;");
+        const QJniObject context = QNativeInterface::QAndroidApplication::context();
+        const auto intent = context.callObjectMethod("getIntent", "()Landroid/content/Intent;");
         const auto key = QJniObject::fromString("outputMode");
         const auto mode = intent.callObjectMethod("getStringExtra", "(Ljava/lang/String;)Ljava/lang/String;", key.object<jstring>()).toString();
         window.settings->androidAudioOutputMode = mode == "audiotrack" ? AudioOutputMode::MediaCompatibility : AudioOutputMode::Automatic;
