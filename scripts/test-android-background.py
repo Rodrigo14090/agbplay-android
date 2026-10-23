@@ -127,7 +127,8 @@ def main():
         continuous("restart-after-stop", 4)
         def command(value):
             before = state()["sequence"]
-            subprocess.run(["adb", "shell", "run-as", PACKAGE, "tee", "files/output-command.txt"], input=value.encode(), stdout=subprocess.DEVNULL, check=True)
+            subprocess.run(["adb", "shell", "run-as", PACKAGE, "tee", "files/output-command.pending"], input=value.encode(), stdout=subprocess.DEVNULL, check=True)
+            adb("shell", "run-as", PACKAGE, "mv", "files/output-command.pending", "files/output-command.txt")
             wait_for(lambda s: s["sequence"] > before and s["lastCommand"] == value)
         for _ in range(3):
             command("restart")
