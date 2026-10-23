@@ -124,7 +124,13 @@ public final class PlaybackService extends Service {
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
         else startForeground(NOTIFICATION, notification());
         wanted = true;
-        if (audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) resumeWithFocus();
+        if (audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            // Explicit Play must acknowledge the latest UI request even when
+            // the Java service already considers itself playing. A focus-gain
+            // callback still avoids duplicate Play acknowledgements below.
+            if (playing) { command(1); publish(); }
+            else resumeWithFocus();
+        }
         else { wanted = false; pausePlayback(false); command(6); }
         } catch (RuntimeException error) {
             android.util.Log.e("agbplay", "Cannot start foreground media playback", error);
