@@ -54,3 +54,103 @@ Se justifica ensayar **AudioTrack streaming float32 estéreo**, MEDIA / MUSIC,
 PERFORMANCE_MODE_NONE y una sesión generada por Android. Es una ruta distinta
 que no requiere parchear APIs privadas de Qt. No garantiza pasar por los mismos
 efectos de un reproductor externo ni habilitar Harman Kardon/Huawei Histen.
+
+## Implementación y límites del cambio
+
+Opciones globales > Playback > **Salida Android**:
+
+- **Automático / Qt**: predeterminado. Misma ruta QAudioSink/callback, formato,
+  ganancia y parámetros de Qt que la referencia estable.
+- **Compatibilidad multimedia / AudioTrack**: AudioTrack MODE_STREAM,
+  ENCODING_PCM_FLOAT estéreo, MEDIA/MUSIC, PERFORMANCE_MODE_NONE y audio session
+  ID generado. No fuerza dispositivo, modo exclusivo, offload ni MMAP. Sigue
+  la selección de ruta Android; no crea efectos propios ni emite una promesa
+  sobre procesamiento Harman Kardon/Histen.
+
+La preferencia se guarda como `androidAudioOutputMode` en config.json. Valores
+antiguos/desconocidos eligen Automático. Se aplica al cerrar las opciones con
+OK o tras Apply. Si falla la alternativa, el log identifica el fallback real a
+Qt, sin cambiar silenciosamente la preferencia persistida. Para reintentar,
+selecciona Automático y después AudioTrack.
+
+`AudioOutput` sigue siendo la interfaz común. Ambos consumen el mismo
+`PlaybackEngine::RenderAudio`, ganancia, productor y AudioFrameQueue. Se detiene
+y une el consumidor anterior antes de crear otro. No se cambia
+`AudioBufferPolicy`, la reserva normal de 30 ms, AudioFrameQueue, MP2KContext ni
+los remuestreadores. La sesión/foco/notificación/wake lock del servicio existente
+controla ambos modos. La pausa conserva PCM pendiente; Stop vacía también el
+búfer AudioTrack mientras está suspendido. El cambio de ruta puede introducir
+una breve pausa y descarta audio ya entregado al antiguo búfer nativo, que no
+puede recuperarse. No se duplica ni reinicia el motor para cambiar de salida.
+
+AudioTrack necesita un escritor dedicado porque su API pública Java es push.
+Ese hilo se conecta a JNI una sola vez, reutiliza un array float y scratch fijos
+y solicita PCM en bloques de aproximadamente 5 ms con reloj monotónico. El
+prefill usa ese mismo ritmo: no vacía de golpe el FIFO si el búfer nativo acepta
+muchos frames. Se pide el mayor entre el mínimo exigido por Android y 20 ms de
+búfer **nativo**; la capacidad real se registra, no se supone. Esto aumenta la
+latencia según el dispositivo; no cambia la reserva de síntesis. No se reduce
+calidad ni se añade una segunda síntesis.
+
+Las escrituras Java son no bloqueantes. Ante backpressure se espera en el
+escritor (hasta 1 ms o señal de cierre), fuera de RenderAudio, conservando offset
+y resto de cada bloque estéreo. Así un pause que precede a una escritura no
+puede dejar el cierre esperando a que drene un AudioTrack pausado. El callback
+Qt y RenderAudio no hacen JNI, mutexes, esperas ni asignaciones nuevas.
+
+**Comparar WAV por esta salida…** usa SAF, copia asincrónica existente y un lector
+libsndfile en el productor. Requiere abrir una ROM/GSF primero y un WAV estéreo
+PCM16/24/32 o float32 a la frecuencia real de reproducción. Si cambiaste la
+frecuencia de preferencias, vuelve a abrir la ROM para aplicarla. No se hace
+resampling, downmix, normalización ni EQ del WAV. Se reproduce en bucle; pausa y
+Stop siguen disponibles. Selecciona una canción para volver a MP2K. Los controles
+de pistas/velocidad sólo tienen sentido al sintetizar MP2K, no al escuchar el
+WAV ya mezclado. El visualizador de pistas no representa las notas del WAV.
+
+## Prueba A/B/C en MatePad
+
+1. Exporta la misma canción como **WAV float32 estéreo a 48000 Hz**. Usa velocidad
+   normal, todas las pistas activas y volumen agbplay 100. Iguala el volumen
+   multimedia del sistema y desactiva EQ/normalización opcionales del reproductor
+   externo. Anota los ajustes de sonido/altavoces de HarmonyOS; no los cambies
+   entre muestras. Evita tramos de padding o fundido.
+2. **A:** escucha MP2K en Automático / Qt. Espera 10 s y guarda el log de agbplay
+   (File > Save Log) o toma un informe ADB con el script inferior.
+3. **B:** reproduce ese WAV en el reproductor externo, por los mismos altavoces,
+   y toma otro informe sin cambiar el volumen del sistema.
+4. **C:** vuelve a agbplay, opciones > Comparar WAV por esta salida… y selecciona
+   el mismo WAV. Escucha y registra. Alterna Automático/AudioTrack, tanto en WAV
+   como en vivo. Anota qué combinación cambia y si se iguala a B.
+5. Repite con Bluetooth, luego vuelve a altavoces; comprueba rutas, continuidad,
+   pantalla apagada, pausa/reanudación y siguiente canción.
+
+Interpretación: si A y C se parecen y B difiere, investiga mezcla/efectos/ruta
+externos; si C se parece a B y A difiere, revisa primero parámetros/ganancia de
+síntesis. Si AudioTrack modifica ambos, hay evidencia de una diferencia entre
+rutas en ese dispositivo, pero todavía no identifica un DSP propietario. Para
+atribuir una diferencia espectral hacen falta capturas alineadas y con nivel
+igualado (loopback o medición acústica controlada), no sólo RMS del PCM interno.
+La instrumentación interna no observa el sonido después del DSP/altavoces.
+
+Con depuración USB y ADB, durante cada caso:
+
+```sh
+./scripts/collect-android-audio.sh A-live-qt
+./scripts/collect-android-audio.sh B-wav-external
+./scripts/collect-android-audio.sh C-wav-qt
+./scripts/collect-android-audio.sh D-live-audiotrack
+./scripts/collect-android-audio.sh E-wav-audiotrack
+```
+
+No se requiere root, permisos generales de almacenamiento ni modificar el DSP.
+`dumpsys` puede estar limitado por el fabricante. Los informes quedan en
+`audio-reports/<caso>` y pueden contener nombres de dispositivos/aplicaciones;
+revísalos antes de compartirlos. No incluyas ROMs ni el WAV comercial en el PR.
+
+El log separa **FIFO** (underrun callbacks/missing frames/RMS/pico) de
+**AudioTrack nativo** (underrunCount, playbackHead, buffer/capacity, session,
+performance, atributos y ruta). En la alternativa, "callback" en la telemetría
+común cuenta pulls PCM de 5 ms, no callbacks AAudio. QAudioSink no expone esos
+contadores nativos; sus informes se identifican como Qt. Cambios de lista Qt y
+rutas AudioTrack se registran sin afirmar que cambie el DSP. El audio session ID
+de AudioTrack no es el token de MediaSession de la notificación.
