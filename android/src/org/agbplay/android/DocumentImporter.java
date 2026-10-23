@@ -119,7 +119,7 @@ public final class DocumentImporter {
 
     private static String suffix(String name) {
         String lower = name.toLowerCase(Locale.ROOT);
-        for (String ext : new String[]{".gba", ".gsflib", ".gsf", ".minigsf", ".zip"})
+        for (String ext : new String[]{".gba", ".gsflib", ".gsf", ".minigsf", ".zip", ".wav"})
             if (lower.endsWith(ext)) return ext;
         return ".bin"; // The original ROM reader also identifies ZIP/GSF/raw by content.
     }

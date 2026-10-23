@@ -236,13 +236,12 @@ void MainWindow::SetupMenuBar()
     QAction *editPreferences = editMenu->addAction("Global Preferences");
     editPreferences->setIcon(QIcon(":/icons/preferences.ico"));
     connect(editPreferences, &QAction::triggered, [this](bool) {
+        const auto previousMode = settings->androidAudioOutputMode;
         SettingsWindow w(this, *settings);
+        connect(&w, &SettingsWindow::diagnosticWavRequested, this, &MainWindow::LoadDiagnosticWav, Qt::QueuedConnection);
         w.exec();
 
-        if (playbackEngine) {
-            playbackEngine->SetOutputNumBuffers(settings->playbackOutputNumBuffers);
-            playbackEngine->SetMaxLoops(settings->playbackLoopIndefinitely ? -1 : settings->playbackMaxLoops);
-        }
+        ApplyAudioPreferences(previousMode);
     });
 
     /* Profile */
@@ -980,6 +979,58 @@ bool MainWindow::AskGameCodeAndUpdateProfile()
     return true;
 }
 
+void MainWindow::ApplyAudioPreferences(AudioOutputMode previousMode)
+{
+        if (playbackEngine) {
+#ifdef Q_OS_ANDROID
+            if (settings->androidAudioOutputMode != previousMode) {
+                try { playbackEngine->SetOutputMode(settings->androidAudioOutputMode, outputSuspended); }
+                catch (const std::exception &error) { Stop(); MBoxError("Audio output", error.what()); }
+            }
+#else
+            (void)previousMode;
+#endif
+            playbackEngine->SetOutputNumBuffers(settings->playbackOutputNumBuffers);
+            playbackEngine->SetMaxLoops(settings->playbackLoopIndefinitely ? -1 : settings->playbackMaxLoops);
+        }
+}
+
+void MainWindow::LoadDiagnosticWav()
+{
+    if (!playbackEngine) { MBoxInfo("Comparar WAV", "Primero abre una ROM/GSF. El WAV sustituye temporalmente la síntesis; selecciona una canción para volver."); return; }
+    if (importBusy) return;
+    QFileDialog dialog(this);
+    dialog.setWindowTitle("Comparar WAV estéreo por la salida seleccionada");
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setNameFilter("WAV PCM (*.wav);;Todos (*)");
+    if (!dialog.exec() || dialog.selectedUrls().isEmpty()) return;
+    const auto url = dialog.selectedUrls().front().toString(QUrl::FullyEncoded);
+    const auto expected = playbackEngine.get();
+    const auto rate = playbackEngine->SampleRate();
+    RunImport([this, url, expected, rate](const std::function<bool()> &cancelled) {
+        const auto path = DocumentAccess::LocalCopy(url);
+        if (cancelled()) return std::function<void()>{};
+        auto wav = std::make_shared<std::unique_ptr<DiagnosticWav>>(std::make_unique<DiagnosticWav>(path, rate));
+        return std::function<void()>([this, expected, wav, path] {
+            if (playbackEngine.get() != expected) return;
+            Stop();
+#ifndef Q_OS_ANDROID
+            playbackEngine->SuspendOutput(true);
+#endif
+            playbackEngine->LoadDiagnosticWav(std::move(*wav));
+            LogAppend("Diagnostic WAV (loop): " + path.filename().string() + "; no synthesis/resampling, same output gain. Select a song to return to MP2K.");
+#ifdef Q_OS_ANDROID
+            statusWidget.songWidget.titleLabel.setText(QString::fromStdString("WAV: " + path.filename().string()));
+            androidPlayback->title(statusWidget.songWidget.titleLabel.text());
+#else
+            playbackEngine->SuspendOutput(false);
+#endif
+            Play();
+        });
+    });
+}
+
 void MainWindow::LoadGame()
 {
     QFileDialog fileDialog(this);
@@ -1181,7 +1232,8 @@ void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths,
             profile->playerTableScanned.size(), profile->playerTableConfig.size(), profile->playerTablePlayback.size(), inactive));
     }
     try {
-        playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile);
+        playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile,
+            AudioBufferPolicy::DefaultReserveMs, settings->androidAudioOutputMode);
     } catch (const std::exception &e) {
         MBoxError("Audio initialization", e.what());
         CloseGame();
@@ -1536,6 +1588,7 @@ void MainWindow::StatusUpdate()
         static auto lastAudioReport = std::chrono::steady_clock::now();
         const auto now = std::chrono::steady_clock::now();
         if (now - lastAudioReport >= std::chrono::seconds(5)) {
+            playbackEngine->PollOutputDiagnostics();
             const auto d = playbackEngine->TakeAudioDiagnostics();
             Debug::print("Android audio ({}s): underrun callbacks={}, missing frames={}, "
                          "queue before callback min/max={}/{}, producer peak={}, target/low={}/{} frames "

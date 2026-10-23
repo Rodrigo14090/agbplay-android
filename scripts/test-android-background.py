@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 import subprocess
 import time
+import sys
+MODE = sys.argv[1] if len(sys.argv) > 1 else "qt"
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build-android-ui/results/background"
+OUT = ROOT / ("build-android-ui/results/background-" + MODE)
 PACKAGE = "org.agbplay.android"
 
 def adb(*args):
@@ -78,8 +80,9 @@ def main():
     try:
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "wm", "dismiss-keyguard")
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity", "--es", "outputMode", MODE)
         continuous("foreground", 4)
+        assert state()["backend"] == MODE, state()
         services = adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         assert "PlaybackService" in services and "isForeground=true" in services, services
         adb("shell", "input", "keyevent", "KEYCODE_HOME")
@@ -122,6 +125,28 @@ def main():
         button = state()
         adb("shell", "input", "tap", button["playX"], button["playY"])
         continuous("restart-after-stop", 4)
+        def command(value):
+            subprocess.run(["adb", "shell", "run-as", PACKAGE, "tee", "files/output-command.txt"], input=value.encode(), stdout=subprocess.DEVNULL, check=True)
+        other = "qt" if MODE == "audiotrack" else "audiotrack"
+        command(other)
+        wait_for(lambda s: s["backend"] == other)
+        continuous("switch-to-" + other, 4)
+        command(MODE)
+        wait_for(lambda s: s["backend"] == MODE)
+        continuous("switch-back-" + MODE, 4)
+        command("mute")
+        wait_for(lambda s: s["playing"] and s["rms"] < 0.000001)
+        command("unmute")
+        continuous("track-unmute", 4)
+        command("wav")
+        wait_for(lambda s: s["diagnosticWav"])
+        continuous("diagnostic-wav", 4)
+        command("song")
+        wait_for(lambda s: not s["diagnosticWav"])
+        continuous("return-to-mp2k", 4)
+        command("gsf")
+        wait_for(lambda s: s["gsf"])
+        continuous("gsf-minigsf-song-two", 4)
         media("stop")
         paused("final-stop")
         assert "PlaybackService" not in adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()

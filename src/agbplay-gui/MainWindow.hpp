@@ -4,6 +4,7 @@
 #include "SonglistWidget.hpp"
 #include "StatusWidget.hpp"
 #include "VolumeSlider.hpp"
+#include "AudioOutputMode.hpp"
 #include "VUMeterWidget.hpp"
 
 #include <atomic>
@@ -92,6 +93,8 @@ private:
     bool AskGameCodeAndUpdateProfile();
 
     void LoadGame();
+    void LoadDiagnosticWav();
+    void ApplyAudioPreferences(AudioOutputMode previousMode);
     bool CloseGame();
     void ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick);
     void ExportStillInProgress();

@@ -1,7 +1,7 @@
 name: Android ARM64 and host regression
 on:
   push:
-    branches: [android/arm64-native]
+    branches: [android/arm64-native, android/audio-compatibility]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -114,7 +114,8 @@ jobs:
           disable-animations: true
           script: |
             python3 scripts/test-android-ui.py
-            python3 scripts/test-android-background.py
+            python3 scripts/test-android-background.py qt
+            python3 scripts/test-android-background.py audiotrack
       - uses: actions/upload-artifact@v4
         if: always()
         with:

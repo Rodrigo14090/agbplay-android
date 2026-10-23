@@ -3,6 +3,10 @@
 #include "SyntheticGsf.hpp"
 #include "PlaybackEngine.hpp"
 #include "DocumentAccess.hpp"
+#include "Settings.hpp"
+#include "SettingsWindow.hpp"
+#include "OS.hpp"
+#include <nlohmann/json.hpp>
 
 #include <QAction>
 #include <QDir>
@@ -62,6 +66,24 @@ private slots:
         qputenv("XDG_CONFIG_HOME", config.path().toUtf8());
         QCoreApplication::setOrganizationName("agbplay");
         QCoreApplication::setApplicationName("agbplay-ui-test");
+    }
+    void audioPreferenceRoundTrip()
+    {
+        Settings saved; saved.Load();
+        QCOMPARE(saved.androidAudioOutputMode, AudioOutputMode::Automatic);
+        saved.androidAudioOutputMode = AudioOutputMode::MediaCompatibility;
+        saved.dirty = true; saved.Save();
+        Settings loaded; loaded.Load();
+        QCOMPARE(loaded.androidAudioOutputMode, AudioOutputMode::MediaCompatibility);
+        const auto path = OS::GetLocalConfigDirectory() / "agbplay" / "config.json";
+        auto json = nlohmann::json::parse(std::ifstream(path));
+        json["androidAudioOutputMode"] = 12345;
+        std::ofstream(path) << json;
+        loaded.Load();
+        QCOMPARE(loaded.androidAudioOutputMode, AudioOutputMode::Automatic);
+        loaded.dirty = true; loaded.Save();
+        SettingsWindow preferences(nullptr, loaded);
+        QVERIFY(!preferences.findChild<QWidget *>("androidAudioOutputMode")); // Android-only control
     }
     void openActionAndPlaylistStayDistinct()
     {

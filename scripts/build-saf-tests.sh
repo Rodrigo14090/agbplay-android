@@ -12,6 +12,7 @@ test_sources=("$project_root"/src/tests/android/org/agbplay/saftest/*.java)
 "$JAVA_HOME/bin/javac" --release 8 \
     -cp "$platform/android.jar:$platform/optional/android.test.runner.jar:$platform/optional/android.test.base.jar" \
     -d "$build_dir/classes" \
+    "$project_root/android/src/org/agbplay/android/MediaAudioTrack.java" \
     "$project_root/android/src/org/agbplay/android/DocumentCopy.java" \
     "$project_root/android/src/org/agbplay/android/DocumentImporter.java" "${test_sources[@]}"
 "$JAVA_HOME/bin/jar" cf "$build_dir/tests.jar" -C "$build_dir/classes" .
