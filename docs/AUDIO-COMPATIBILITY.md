@@ -28,6 +28,14 @@ callback de `QAndroidAudioSinkStream`, que utiliza **AAudio**, no MediaPlayer.
 - `qaudiosink.h` no expone selección de performance mode, MMAP ni session ID.
   Cambiar atributos del AudioFocusRequest del servicio no cambia los del sink.
 
+AAudio puede utilizar MMAP cuando hardware/política lo permiten o una ruta
+legacy interna a AudioTrack/AudioFlinger cuando no. Bluetooth y otros dispositivos
+pueden cambiar esa decisión. La API AAudio no demuestra MMAP ni evita
+necesariamente el mezclador/efectos. La alternativa Java AudioTrack hace
+solicitudes diferentes (performance NONE y sesión generada), pero Android podría
+resolver ambas hacia una misma mezcla física. Esa coincidencia sólo se puede
+comprobar en el dispositivo; las opciones no son dos alias del mismo código.
+
 Fuentes versionadas:
 [Qt sink](https://github.com/qt/qtmultimedia/blob/v6.11.2/src/multimedia/android/qandroidaudiosink.cpp),
 [Qt builder](https://github.com/qt/qtmultimedia/blob/v6.11.2/src/multimedia/android/qaaudiostream.cpp),
@@ -106,6 +114,10 @@ resampling, downmix, normalización ni EQ del WAV. Se reproduce en bucle; pausa 
 Stop siguen disponibles. Selecciona una canción para volver a MP2K. Los controles
 de pistas/velocidad sólo tienen sentido al sintetizar MP2K, no al escuchar el
 WAV ya mezclado. El visualizador de pistas no representa las notas del WAV.
+La importación SAF mantiene el límite existente de **64 MiB por documento**
+(aproximadamente 2 min 55 s para float32 estéreo a 48 kHz). Para un WAV mayor,
+compara un tramo más corto conservando formato y frecuencia; el lector es
+streaming, pero la copia privada sigue acotada por ese importador.
 
 ## Prueba A/B/C en MatePad
 
@@ -154,3 +166,23 @@ común cuenta pulls PCM de 5 ms, no callbacks AAudio. QAudioSink no expone esos
 contadores nativos; sus informes se identifican como Qt. Cambios de lista Qt y
 rutas AudioTrack se registran sin afirmar que cambie el DSP. El audio session ID
 de AudioTrack no es el token de MediaSession de la notificación.
+
+En `media.audio_flinger`, correlaciona el audio session ID con el stream y las
+cadenas de efectos habilitadas; en `media.audio_policy`, identifica dispositivos,
+mezcladores y flags de salida (por ejemplo FAST/DIRECT/MMAP, cuando se publiquen).
+Compara los casos completos, no sólo el nombre de la aplicación. La presencia
+de una cadena no identifica por sí sola el ajuste de los cuatro altavoces ni
+prueba su contribución acústica. Si un dump está denegado o no contiene esa
+información, conserva esa limitación como resultado desconocido.
+
+## Orden de las órdenes del servicio
+
+El ensayo Android detectó una carrera al cambiar de vivo a WAV mediante
+Stop seguido inmediatamente de Play: onDestroy del servicio anterior podía
+enviar una confirmación Stop tardía que cancelaba la reproducción nueva. Las
+solicitudes y confirmaciones JNI ahora llevan una generación de transporte.
+Java rechaza intents atrasados y Qt descarta confirmaciones de otra generación.
+Un Play explícito se confirma incluso si el servicio ya considera activa la
+reproducción; recuperar foco no duplica esa confirmación. La prueba añade tres
+reinicios rápidos desde la interfaz, además del cambio vivo/WAV y sus controles.
+Este cambio sólo ordena el plano de control; no altera muestras ni buffering.
