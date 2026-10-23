@@ -19,6 +19,7 @@ static const bool DEFAULT_QUICK_EXPORT_ASK = true;
 
 void Settings::Load()
 {
+    androidAudioOutputMode = AudioOutputMode::Automatic;
     using nlohmann::json;
 
     std::ifstream fileStream(ConfigPath());
@@ -42,6 +43,8 @@ void Settings::Load()
 
     json j = json::parse(fileStream);
     fileStream.close();
+    if (j.value("androidAudioOutputMode", nlohmann::json{}) == "media-compatibility")
+        androidAudioOutputMode = AudioOutputMode::MediaCompatibility;
 
     if (j.contains("playbackSampleRate") && j["playbackSampleRate"].is_number()) {
         playbackSampleRate = std::max<uint32_t>(1u, j["playbackSampleRate"]);
@@ -138,6 +141,8 @@ void Settings::Save()
     j["playbackMaxLoops"] = playbackMaxLoops;
     j["playbackLoopIndefinitely"] = playbackLoopIndefinitely;
     j["playbackVolume"] = playbackVolume;
+    j["androidAudioOutputMode"] = androidAudioOutputMode == AudioOutputMode::MediaCompatibility
+        ? "media-compatibility" : "automatic";
     j["exportSampleRate"] = exportSampleRate;
     j["exportBitDepth"] = exportBitDepth;
     j["exportMaxLoops"] = exportMaxLoops;
