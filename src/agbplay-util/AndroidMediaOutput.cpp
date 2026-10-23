@@ -44,6 +44,7 @@ class AndroidMediaOutput final : public AudioOutput {
             QJniEnvironment env;
             Call(env, priority);
             auto next = std::chrono::steady_clock::now();
+            auto progressed = next;
             while (!quit.load(std::memory_order_acquire)) {
                 if (!remaining) {
                     // Pace reads even while pre-filling: AudioTrack may accept a
@@ -67,6 +68,9 @@ class AndroidMediaOutput final : public AudioOutput {
                 CheckJava(env);
                 if (count < 0) { error.store(count); break; }
                 if (!count) {
+                    if (std::chrono::steady_clock::now() - progressed > std::chrono::seconds(3)) {
+                        error.store(-1004); break; // native stream stopped making progress
+                    }
                     // Backpressure is waited out on this dedicated worker,
                     // never in RenderAudio. Nonblocking writes avoid the race
                     // where pause precedes entry into a blocking native write.
@@ -77,6 +81,7 @@ class AndroidMediaOutput final : public AudioOutput {
                 if (static_cast<size_t>(count) > remaining || (count & 1)) {
                     error.store(-1002); break; // reject non-frame-aligned / impossible writes
                 }
+                progressed = std::chrono::steady_clock::now();
                 offset += static_cast<size_t>(count);
                 remaining -= static_cast<size_t>(count);
                 if (!primed) {
@@ -121,7 +126,11 @@ public:
             Debug::print("Audio route: requested=MediaCompatibility, actual=AudioTrack streaming float32 / {} Hz / stereo, gain=1; PCM pulls={} frames, native prefill={} frames", rate, scratch.size() / 2, capacity);
             PollDiagnostics();
             if (!suspended) Suspend(false);
-        } catch (...) { Call(env, close); throw; }
+        } catch (...) {
+            env->CallVoidMethod(track.object(), close);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            throw;
+        }
     }
     ~AndroidMediaOutput() override {
         try { Suspend(true); } catch (...) { if (writer.joinable()) writer.join(); }
@@ -137,14 +146,23 @@ public:
             changed.notify_all();
             // Writes are nonblocking, so joining cannot wait for a paused
             // native buffer to drain. Retain a partial float block for resume.
-            { std::scoped_lock lock(control); Call(env, pause); }
+            try { std::scoped_lock lock(control); Call(env, pause); }
+            catch (const std::exception &failure) {
+                Debug::print("AudioTrack pause failed: {}", failure.what());
+                int noError = 0; error.compare_exchange_strong(noError, -1005);
+            }
             if (writer.joinable()) writer.join();
         } else if (!writer.joinable()) {
-            quit.store(false, std::memory_order_release);
-            if (!primed && prefilled == capacity) primed = true;
-            if (primed) Call(env, play);
-            try { writer = std::thread([this] { Worker(); }); }
-            catch (...) { quit.store(true); Call(env, pause); throw; }
+            try {
+                if (!primed && prefilled == capacity) primed = true;
+                if (primed) Call(env, play);
+                quit.store(false, std::memory_order_release);
+                writer = std::thread([this] { Worker(); });
+            } catch (const std::exception &failure) {
+                quit.store(true);
+                errorDetail = failure.what();
+                error.store(-1003);
+            }
         }
     }
     void DiscardPending() override {

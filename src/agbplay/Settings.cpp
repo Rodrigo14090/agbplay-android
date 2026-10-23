@@ -43,7 +43,7 @@ void Settings::Load()
 
     json j = json::parse(fileStream);
     fileStream.close();
-    if (j.value("androidAudioOutputMode", nlohmann::json{}) == "media-compatibility")
+    if (j.contains("androidAudioOutputMode") && j["androidAudioOutputMode"] == "media-compatibility")
         androidAudioOutputMode = AudioOutputMode::MediaCompatibility;
 
     if (j.contains("playbackSampleRate") && j["playbackSampleRate"].is_number()) {
