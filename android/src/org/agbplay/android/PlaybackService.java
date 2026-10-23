@@ -14,17 +14,30 @@ public final class PlaybackService extends Service {
     private static final String PLAY = "org.agbplay.PLAY", PAUSE = "org.agbplay.PAUSE", STOP = "org.agbplay.STOP";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile boolean nativeReady;
+    private static volatile long latestGeneration;
+    private long generation;
     private static PlaybackService instance; // Android main thread only
-    private static native void nativeCommand(int command);
+    private static native void nativeCommand(int command, long generation);
     public static void setNativeReady(boolean ready) { nativeReady = ready; }
-    private static void command(int value) { if (nativeReady) nativeCommand(value); }
-
-    public static void play(Context context, String title) {
-        context.getApplicationContext().startForegroundService(new Intent(context, PlaybackService.class)
-                .setAction(PLAY).putExtra("title", title));
+    private void command(int value) {
+        if (nativeReady && generation == latestGeneration) nativeCommand(value, generation);
     }
-    public static void pause() { MAIN.post(() -> { if (instance != null) instance.pausePlayback(false); }); }
-    public static void stop(Context context) {
+
+    public static void play(Context context, String title, long generation) {
+        latestGeneration = generation;
+        context.getApplicationContext().startForegroundService(new Intent(context, PlaybackService.class)
+                .setAction(PLAY).putExtra("title", title).putExtra("generation", generation));
+    }
+    public static void pause(long generation) {
+        latestGeneration = generation;
+        MAIN.post(() -> {
+            if (generation != latestGeneration) return;
+            if (instance != null) { instance.generation = generation; instance.pausePlayback(false); }
+            else if (nativeReady) nativeCommand(2, generation);
+        });
+    }
+    public static void stop(Context context, long generation) {
+        latestGeneration = generation;
         context.getApplicationContext().stopService(new Intent(context, PlaybackService.class));
     }
     public static void title(String title) {
@@ -83,8 +96,19 @@ public final class PlaybackService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int id) {
         if (!nativeReady || intent == null) { stopSelf(); return START_NOT_STICKY; }
-        if (intent.hasExtra("title")) title = intent.getStringExtra("title");
         String action = intent.getAction();
+        // UI requests may overtake service creation/destruction. A late PLAY
+        // must not acquire focus or restart after a newer Pause/Stop.
+        if (intent.hasExtra("generation")) {
+            long requested = intent.getLongExtra("generation", 0);
+            if (requested != latestGeneration) {
+                if (!foreground) stopSelf();
+                return START_NOT_STICKY;
+            }
+            generation = requested;
+        }
+        if (generation != latestGeneration) { if (!foreground) stopSelf(); return START_NOT_STICKY; }
+        if (intent.hasExtra("title")) title = intent.getStringExtra("title");
         if (PLAY.equals(action)) startPlayback();
         else if (PAUSE.equals(action)) pausePlayback(false);
         else if (STOP.equals(action)) { explicitStop = true; stopSelf(); }
@@ -92,6 +116,7 @@ public final class PlaybackService extends Service {
     }
 
     private void startPlayback() {
+        if (generation != latestGeneration) return;
         if (!nativeReady) { stopSelf(); return; }
         try {
         // Android 15 requires an active foreground service for background focus requests.
@@ -108,6 +133,7 @@ public final class PlaybackService extends Service {
         }
     }
     private void resumeWithFocus() {
+        if (generation != latestGeneration) return;
         MAIN.removeCallbacks(expirePause);
         if (playing) { publish(); return; }
         if (!wake.isHeld()) wake.acquire(); // scoped to actual playback; never keeps the display on
@@ -126,7 +152,7 @@ public final class PlaybackService extends Service {
         MAIN.postDelayed(expirePause, 5 * 60 * 1000);
     }
     private PendingIntent action(String name, int id) {
-        Intent intent = new Intent(this, PlaybackService.class).setAction(name);
+        Intent intent = new Intent(this, PlaybackService.class).setAction(name).putExtra("generation", generation);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         return PLAY.equals(name) ? PendingIntent.getForegroundService(this, id, intent, flags)
                                 : PendingIntent.getService(this, id, intent, flags);
@@ -154,7 +180,7 @@ public final class PlaybackService extends Service {
         if (foreground) getSystemService(NotificationManager.class).notify(NOTIFICATION, notification());
     }
     @Override public void onDestroy() {
-        instance = null;
+        if (instance == this) instance = null;
         MAIN.removeCallbacks(expirePause);
         // Expiring an idle service must not turn Pause into Stop or lose the
         // C++ song position. Explicit Stop still resets a paused player.

@@ -21,6 +21,7 @@
 
 class BackgroundAudioProbe {
     static inline int uiTaskRuns = 0;
+    static inline QString lastCommand;
     static inline bool wavActive = false, gsfActive = false;
 public:
     static void start(MainWindow &window) {
@@ -76,7 +77,9 @@ public:
                 QFile command(directory + "/output-command.txt");
                 if (command.open(QIODevice::ReadOnly)) {
                     const auto value = command.readAll().trimmed(); command.close(); command.remove();
-                    if (value == "qt" || value == "audiotrack") {
+                    lastCommand = QString::fromUtf8(value);
+                    if (value == "restart") { window.Stop(); window.Play(); }
+                    else if (value == "qt" || value == "audiotrack") {
                         const auto previous = window.settings->androidAudioOutputMode;
                         SettingsWindow options(&window, *window.settings);
                         auto *combo = options.findChild<QComboBox *>("androidAudioOutputMode");
@@ -117,6 +120,7 @@ public:
                     {"rms", rms}, {"error", QString::fromStdString(error)}};
                 QJsonObject result = state;
                 result["uiTaskRuns"] = uiTaskRuns;
+                result["lastCommand"] = lastCommand;
                 result["diagnosticWav"] = wavActive; result["gsf"] = gsfActive;
                 result["backend"] = window.playbackEngine && window.playbackEngine->OutputMode() == AudioOutputMode::MediaCompatibility ? "audiotrack" : "qt";
                 const auto play = window.playButton.mapToGlobal(window.playButton.rect().center());

@@ -126,7 +126,12 @@ def main():
         adb("shell", "input", "tap", button["playX"], button["playY"])
         continuous("restart-after-stop", 4)
         def command(value):
+            before = state()["sequence"]
             subprocess.run(["adb", "shell", "run-as", PACKAGE, "tee", "files/output-command.txt"], input=value.encode(), stdout=subprocess.DEVNULL, check=True)
+            wait_for(lambda s: s["sequence"] > before and s["lastCommand"] == value)
+        for _ in range(3):
+            command("restart")
+            wait_for(lambda s: s["playing"] and s["rms"] > 0.00001)
         other = "qt" if MODE == "audiotrack" else "audiotrack"
         command(other)
         wait_for(lambda s: s["backend"] == other)
@@ -152,7 +157,11 @@ def main():
         assert "PlaybackService" not in adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         print("PASS background lifecycle: service/notification controls, focus and safe stop", flush=True)
     finally:
-        (OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))
+        log = adb("logcat", "-d")
+        (OUT / "logcat.txt").write_bytes(log)
+        if sys.exc_info()[0] is not None:
+            print("Android audio failure log:", flush=True)
+            print("\n".join(line for line in log.decode(errors="replace").splitlines() if any(tag in line for tag in ("agbplay", "AudioTrack", "AndroidRuntime")))[-18000:], flush=True)
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "am", "force-stop", PACKAGE)
         adb("shell", "am", "force-stop", "org.agbplay.saftest")

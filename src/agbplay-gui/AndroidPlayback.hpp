@@ -12,11 +12,13 @@ public:
     void pause();
     void stop();
     void title(const QString &title);
+    void dispatch(int value, qint64 generation);
 signals:
     void command(int value);
     void error(const QString &message);
 private:
     bool checkException();
     bool ready = false;
+    qint64 generation = 0;
 };
 #endif
