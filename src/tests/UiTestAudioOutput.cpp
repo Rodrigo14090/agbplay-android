@@ -21,7 +21,9 @@ public:
 }
 // Resolve the backend at link time in this executable only. Production UI and
 // PlaybackEngine use their unchanged Qt/PortAudio backend implementations.
-std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t, void *context, Render render)
+std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t, void *context, Render render, AudioOutputMode, bool suspended)
 {
-    return std::make_unique<Output>(context, render);
+    auto result = std::make_unique<Output>(context, render);
+    if (suspended) result->Suspend(true);
+    return result;
 }

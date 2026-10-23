@@ -20,6 +20,9 @@ public:
     explicit SettingsWindow(QWidget *parent, Settings &settings);
     ~SettingsWindow();
 
+signals:
+    void diagnosticWavRequested();
+
 private:
     void playbackComboBoxActivated(int index);
     void exportComboBoxActivated(int index);

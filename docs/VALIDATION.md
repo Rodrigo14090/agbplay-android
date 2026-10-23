@@ -1,5 +1,97 @@
 # Validación de la entrega
 
+## Salida multimedia Android experimental (rama independiente)
+
+[APK ARM64 1.1.0-audio-compat-dev firmado (ZIP de distribución)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39886302897/artifacts/12472742751).
+
+- Fuente del APK: `9d4672a59e4c321c88f35326cf111774d32072c6`.
+- SHA-256 del APK: `5a06ea10ae31d3c40ad79c5a3207a26dc39c433045dff6c425c7b2f21becaa13`.
+- `org.agbplay.android`, versionCode **11**, mínimo API 28, target API 35,
+  compile SDK 36. Firma de desarrollo v2 verificada y 17 bibliotecas AArch64
+  alineadas a 16 KiB. Qt Multimedia 6.11.2, NDK 27.2.12479018.
+- [Workflow de este APK](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39886302897),
+  [PR #2](https://github.com/Rodrigo14090/agbplay-android/pull/2).
+- Base estable preservada: `android/arm64-native` en
+  `6ca136e06e758d9c9d441d2c013d893214d868b8`; `main` en
+  `0b87da48d2502da359e45718eec8566ac40fa9d7`. Todo el experimento está en
+  `android/audio-compatibility`, sin merge ni force-push a esas ramas.
+
+La investigación de las fuentes exactas de Qt confirma AAudio compartido,
+MEDIA/MUSIC predeterminados y solicitud de baja latencia. No es correcto explicar
+el sonido de Huawei simplemente por la ausencia de atributos multimedia. El
+setter MMAP AUTO de Qt sólo se ejecuta desde API 36; su activación efectiva en
+la MatePad no se ha medido. QAudioSink no expone control público de performance
+mode ni audio session ID. No se ha demostrado que toda la salida Qt evite DSP.
+
+Las opciones ofrecen Automático/Qt por defecto y AudioTrack streaming float32
+MEDIA/MUSIC, PERFORMANCE_MODE_NONE, con sesión generada, como alternativa.
+Ambas utilizan el único productor, FIFO y RenderAudio. No cambian MP2K/M4A,
+SINC/BLEP/BLAMP, AudioFrameQueue ni AudioBufferPolicy. El escritor nuevo mantiene
+bloques parciales, prefill acompasado y cierre sin escrituras bloqueantes. Se
+registra backpressure sin progreso durante 3 s como error para volver a Qt.
+Se conservan foco, servicio, controles y CPU wake lock existentes. Las órdenes
+del servicio llevan una generación: se descartan confirmaciones de un Stop
+anterior al iniciar una reproducción nueva (vivo/WAV o reinicio rápido).
+Un Play explícito siempre confirma la solicitud vigente.
+
+El modo WAV sustituye temporalmente al sintetizador en el mismo productor y
+salida: PCM estéreo a la frecuencia real, sin remuestreo ni normalización. Su
+copia SAF y apertura del lector ocurren fuera de la interfaz; los bloques se
+leen en el productor. Los resultados no observan efectos posteriores al PCM
+entregado al sistema. Uso, arquitectura, hipótesis y procedimiento físico A/B/C:
+[AUDIO-COMPATIBILITY.md](AUDIO-COMPATIBILITY.md).
+
+Verificación:
+
+- Linux local: **7/7 CTest**; CI del APK: motor normal **6/6**, motor
+  sanitizado **6/6**, GUI/motor **7/7**. Los **seis trabajos** del workflow
+  de este APK están aprobados, incluido el recorrido completo Android.
+- ASan/UBSan/LeakSanitizer locales: reproducción y WAV **2/2** sin supresiones;
+  GUI **1/1** con la única supresión externa conocida de QScroller Qt 6.8.2.
+- ThreadSanitizer: productor real/cambios de modo/WAV **1/1**, sin carreras.
+- Java Android y sintaxis Clang NDK ARM64 de la salida y probe comprobadas;
+  APK completo compilado y firma/ABI/alineación verificadas por Actions.
+- Android API 35 x86_64: **11/11** pruebas instrumentadas. La prueba nueva usa
+  AudioTrack real y verifica formato, MEDIA/MUSIC, sesión positiva, performance
+  NONE, backpressure no bloqueante, avance del playback head, pausa, flush y
+  seis ciclos de construcción/cierre. Incluye las diez pruebas SAF existentes.
+- Nuevas pruebas de transporte: cambio reiterado de salida sin dos consumidores
+  vivos, estado suspendido, fallo de apertura y error de ejecución con retorno
+  a Qt. Los fallos de fallback se inyectan en el backend de pruebas Linux; no se
+  presentan como una desconexión nativa real de la MatePad.
+- Exportación sintética float32 frente a MP2KContext equivalente: **diferencia
+  entre muestras = 0**, RMS **0.165678**, pico **0.332435** en 16 bloques. El WAV
+  también atraviesa el productor/FIFO/ganancia real con **960 frames estéreo
+  exactos**, incluyendo bucles sin relleno añadido. PCM16/24/32 se verifica con
+  tolerancia de un LSB, no con una falsa expectativa de igualdad float exacta.
+
+Qt Android 6.11.2: **4/4** escenarios táctiles (teléfono, fuente ampliada,
+horizontal y tablet). Los dos recorridos de audio, arrancando en Qt y AudioTrack,
+aprobaron primer plano, Inicio, pantalla apagada, pausa/reanudación, foco temporal
+y permanente, cierre, tres Stop/Play rápidos, cambio de ruta desde el widget de
+opciones y persistencia de la preferencia, mute/unmute, WAV y retorno a MP2K,
+y reproducción de la segunda canción del GSFLIB/MINIGSF generado.
+
+| Arranque del probe | Frames al finalizar pantalla apagada | RMS final de ese intervalo | Underruns FIFO acumulados al finalizarlo | Underruns FIFO al último cierre |
+| --- | ---: | ---: | ---: | ---: |
+| Qt | 1440576 | 0.113488 | 11 | 45 |
+| AudioTrack | 1433800 | 0.087353 | 30 | 36 |
+
+Son contadores del FIFO común en un **host virtual sin garantías de tiempo real**;
+no son contadores nativos de AAudio/AudioTrack ni una certificación de cero
+pérdidas. Las muestras no nulas y el avance de frames prueban que la reproducción
+continúa. La instrumentación nativa AudioTrack se conserva por separado en los
+logs del artefacto. Los RMS de ventanas no alineadas no demuestran diferencias
+de ganancia ni de espectro entre rutas.
+
+[Capturas, estados y registros Android del commit del APK](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39886302897/artifacts/12472768830).
+
+No hay MatePad ni teléfono físico conectado. No se afirma equivalencia tonal,
+activación de un DSP Huawei ni cero underruns físicos por pasar una prueba en
+emulador. Permanecen pendientes la escucha A/B/C en la MatePad, mediciones después
+de la salida Android, conmutación real de altavoces/Bluetooth y reproducción
+prolongada con pantalla apagada bajo la política del fabricante.
+
 ## Reproducción en segundo plano (décima entrega)
 
 [Descargar APK 1.0.9 ARM64 firmado (ZIP de distribución)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39838581300/artifacts/12452790852)
