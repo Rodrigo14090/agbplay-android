@@ -49,10 +49,14 @@ El [CI del PR](https://github.com/Rodrigo14090/agbplay-android/actions/runs/4036
 aprobó motor normal/sanitizado, GUI/DPI con Qt 6.4.2, SAF y APK; la comparación
 también dio 1008/528 px. Clang del NDK aprobó la comprobación de sintaxis ARM64.
 La validación táctil en teléfono/tablet reales sigue pendiente.
-Al preparar este registro seguía en curso el recorrido largo de ciclo de vida
-del emulador en el workflow de push, junto a la instalación de dependencias del
-trabajo Linux normal duplicado. El equivalente Linux normal del PR ya aprobó;
-no se declara finalizado todo el workflow de push.
+También aprobó el [recorrido Android API 35 x86_64](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40369365267/job/121735621317):
+ambos modos de audio/ciclo de vida y cuatro escenarios de toques ADB existentes.
+[Capturas y registros](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40369365267/artifacts/12671943659).
+Esos toques comprueban Abrir/Menú/Carpeta; los gestos de desplazamiento se probaron
+mediante QScroller en Linux, no con el dedo en hardware real. Al cerrar este
+registro sólo seguía instalando dependencias el trabajo Linux normal duplicado
+del push; su equivalente del PR ya aprobó. No se declara finalizado todo el
+workflow de push.
 
 ## Registro anterior: APK 1.1.2 (sustituido)
 
