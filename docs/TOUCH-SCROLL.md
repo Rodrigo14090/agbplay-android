@@ -5,6 +5,35 @@ en producción sólo se activa con la interfaz Android. El escritorio conserva
 su vista y configuración originales. No se modifica ningún archivo de síntesis,
 FIFO ni salida de audio.
 
+## APK de prueba 1.1.2
+
+[APK ARM64 firmado, comprimido en ZIP](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360711708/artifacts/12668660749).
+
+- Fuente exacta: `eecca14c3c9015dc36f2648acf1323fa512591db`.
+- Rama: `android/audio-compatibility`, [PR #2](https://github.com/Rodrigo14090/agbplay-android/pull/2).
+- Versión `1.1.2-audio-compat-dev`, versionCode **13**.
+- SHA-256 APK: `198667829a388f7f4cb8a4b372239f804dee795623ee2cfe8fafdf338979d1d9`.
+- Firma de desarrollo v2 y 17 bibliotecas AArch64 con alineación de 16 KiB
+  verificadas en CI. Qt 6.11.2, NDK 27.2.12479018.
+
+Linux local (Qt 6.8.2): compilación y **8/8 CTest** aprobados; las comprobaciones
+de arrastre, inercia, rueda y edición también pasan con escala 2× y 3×. CI Linux
+(Qt 6.4.2) aprobó **8/8** y las dos repeticiones DPI. Comprobación de sintaxis
+local con Clang del NDK/ARM64 y compilación completa del APK aprobadas.
+
+El [workflow del PR](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360724706)
+finalizó correctamente: motor normal y sanitizado, interfaz/DPI, SAF y APK.
+En el workflow de push también aprobó el
+[recorrido Android API 35 x86_64](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360711708/job/121705055401):
+cuatro escenarios de toques ADB sobre Abrir/Menú/Carpeta y ambos recorridos de
+audio, con Home, pantalla apagada, foco, pausa/Stop, modos, pistas, WAV y GSF.
+[Capturas y registros](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360711708/artifacts/12669930027).
+Los gestos de desplazamiento se verificaron mediante QScroller en Linux; esos
+toques ADB existentes no evalúan la sensación de arrastre en un dispositivo.
+Los dos trabajos Linux duplicados del push seguían instalando dependencias al
+cerrar este registro; sus equivalentes del PR ya habían aprobado. No se declara
+finalizado todo el workflow de push por haber pasado esas pruebas en el PR.
+
 ## Causa y corrección
 
 `QScroller` entrega posiciones en píxeles a las barras de `QAbstractScrollArea`.

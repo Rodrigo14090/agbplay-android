@@ -1,5 +1,16 @@
 # Validación de la entrega
 
+## Desplazamiento táctil por píxeles (1.1.2 experimental)
+
+[APK ARM64 1.1.2 con firma de desarrollo v2 (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360711708/artifacts/12668660749).
+Fuente exacta: `eecca14c3c9015dc36f2648acf1323fa512591db`, rama
+`android/audio-compatibility`, versionCode 13. El ajuste sólo afecta a la
+configuración táctil de Canciones y Playlist, conservando el audio de 1.1.1.
+Compilación Linux y 8/8 CTest aprobados; comprobaciones de arrastre, inercia,
+rueda y edición también a DPI 2× y 3×. APK con 17 bibliotecas ARM64/alineación
+16 KiB y firma verificados en CI. [Causa, parámetros, SHA-256, evidencia y
+prueba física pendiente](TOUCH-SCROLL.md).
+
 ## AudioTrack sin microhuecos por relleno (1.1.1 experimental)
 
 [APK ARM64 firmado 1.1.1-audio-compat-dev (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40253417196/artifacts/12621469462).
