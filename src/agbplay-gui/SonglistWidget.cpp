@@ -1,9 +1,11 @@
 #include "SonglistWidget.hpp"
 
 #include <QEvent>
+#include <QEasingCurve>
 #include <QMenu>
 #include <QToolButton>
 #include <QScroller>
+#include <QScrollerProperties>
 #include <QInputDialog>
 
 SonglistWidget::SonglistWidget(const QString &titleString, bool editable, QWidget *parent) :
@@ -86,7 +88,27 @@ void SonglistWidget::EnableTouchInterface()
     selectAllCheckBox.setFixedSize(48, 48);
     selectAllCheckBox.setAccessibleName(selectAllCheckBox.toolTip());
     listWidget.setStyleSheet("QListWidget::item { min-height: 48px; } QListWidget::indicator { width: 28px; height: 28px; }");
+    // Only the Android touch layout calls this in production. QScroller sends
+    // pixel positions directly to the scrollbars: ScrollPerItem interprets each
+    // pixel as a whole row. Qt also derives the wheel step from the row height
+    // in ScrollPerPixel, so ordinary mouse wheel scrolling still moves rows.
+    listWidget.setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    listWidget.setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     QScroller::grabGesture(listWidget.viewport(), QScroller::TouchGesture);
+    auto *scroller = QScroller::scroller(listWidget.viewport());
+    auto properties = scroller->scrollerProperties();
+    // Physical units (metres, seconds); QScroller handles the screen DPI.
+    // Keep direct dragging 1:1 and bound the fling to a short, gentle coast.
+    properties.setScrollMetric(QScrollerProperties::DragStartDistance, 0.003);
+    properties.setScrollMetric(QScrollerProperties::DragVelocitySmoothingFactor, 0.4);
+    properties.setScrollMetric(QScrollerProperties::MaximumVelocity, 0.25);
+    properties.setScrollMetric(QScrollerProperties::DecelerationFactor, 0.35);
+    properties.setScrollMetric(QScrollerProperties::ScrollingCurve, QEasingCurve(QEasingCurve::OutQuad));
+    properties.setScrollMetric(QScrollerProperties::AcceleratingFlickMaximumTime, 0.0);
+    properties.setScrollMetric(QScrollerProperties::AcceleratingFlickSpeedupFactor, 1.0);
+    properties.setScrollMetric(QScrollerProperties::HorizontalOvershootPolicy, QScrollerProperties::OvershootAlwaysOff);
+    properties.setScrollMetric(QScrollerProperties::VerticalOvershootPolicy, QScrollerProperties::OvershootAlwaysOff);
+    scroller->setScrollerProperties(properties);
     auto *more = new QToolButton(this);
     more->setText("⋮");
     more->setAccessibleName("Acciones de la lista");

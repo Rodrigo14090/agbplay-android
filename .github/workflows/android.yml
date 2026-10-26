@@ -33,6 +33,13 @@ jobs:
         env:
           AGBPLAY_UI_CAPTURE_DIR: ${{ runner.temp }}/ui-captures
         run: ./scripts/test-host.sh -DAGBPLAY_BUILD_GUI=ON
+      - name: Verify touch scrolling and mouse wheel at high DPI
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          for scale in 2 3; do
+            QT_SCALE_FACTOR="$scale" ./build-test/src/agbplay-gui/test-touch-ui songListTouchScroll songListWheelAndEditing
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
