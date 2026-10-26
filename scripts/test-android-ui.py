@@ -49,7 +49,8 @@ def test(name, width, height, density, font_scale):
     # With background_running=true, a live Qt timer does not imply that Android
     # is delivering input to this Activity. Wait for actual foreground readiness.
     current = wait_for(lambda s: s["windowWidth"] > 100 and s["windowHeight"] > 100
-                       and s["applicationState"] == 4 and s["updatesEnabled"] and s["enabled"])
+                       and s["applicationState"] == 4 and s["updatesEnabled"] and s["enabled"]
+                       and s["exposed"] and s["inputFocus"])
     time.sleep(1)  # Allow native bars/insets to settle before real input.
     current = state()
     capture(name)
@@ -86,6 +87,17 @@ def main():
         test("tablet", 1600, 1200, 160, 1.0)
     finally:
         (OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))
+        if __import__("sys").exc_info()[0] is not None:
+            capture("failure")
+            windows = adb("shell", "dumpsys", "window").decode(errors="replace")
+            print("Android window/input diagnostics:", flush=True)
+            print("\n".join(line for line in windows.splitlines() if any(key in line for key in
+                ("mCurrentFocus", "mFocusedApp", "mHasSurface", "isOnScreen", "mViewVisibility", "Keyguard", "mFrame="))), flush=True)
+            try:
+                adb("shell", "uiautomator", "dump", "/data/local/tmp/agbplay-ui.xml")
+                print(adb("shell", "cat", "/data/local/tmp/agbplay-ui.xml").decode(errors="replace"), flush=True)
+            except subprocess.CalledProcessError:
+                pass
         adb("shell", "wm", "size", "reset")
         adb("shell", "wm", "density", "reset")
         adb("shell", "settings", "put", "system", "font_scale", "1.0")
