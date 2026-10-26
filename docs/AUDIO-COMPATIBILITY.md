@@ -81,24 +81,34 @@ OK o tras Apply. Si falla la alternativa, el log identifica el fallback real a
 Qt, sin cambiar silenciosamente la preferencia persistida. Para reintentar,
 selecciona Automático y después AudioTrack.
 
-`AudioOutput` sigue siendo la interfaz común. Ambos consumen el mismo
-`PlaybackEngine::RenderAudio`, ganancia, productor y AudioFrameQueue. Se detiene
+`AudioOutput` sigue siendo la interfaz común. Ambos comparten ganancia, productor y AudioFrameQueue. Qt usa el callback
+`RenderAudio`; AudioTrack usa la lectura disponible sin relleno de la misma
+etapa de ganancia/medición. Se detiene
 y une el consumidor anterior antes de crear otro. No se cambia
-`AudioBufferPolicy`, la reserva normal de 30 ms, AudioFrameQueue, MP2KContext ni
-los remuestreadores. La sesión/foco/notificación/wake lock del servicio existente
+`AudioBufferPolicy`, la reserva normal de 30 ms, capacidad del FIFO, MP2KContext
+ni los remuestreadores. El FIFO conserva `Take` para callbacks y añade
+`TakeAvailable` para el escritor push. La sesión/foco/notificación/wake lock del servicio existente
 controla ambos modos. La pausa conserva PCM pendiente; Stop vacía también el
 búfer AudioTrack mientras está suspendido. El cambio de ruta puede introducir
 una breve pausa y descarta audio ya entregado al antiguo búfer nativo, que no
 puede recuperarse. No se duplica ni reinicia el motor para cambiar de salida.
 
 AudioTrack necesita un escritor dedicado porque su API pública Java es push.
-Ese hilo se conecta a JNI una sola vez, reutiliza un array float y scratch fijos
-y solicita PCM en bloques de aproximadamente 5 ms con reloj monotónico. El
-prefill usa ese mismo ritmo: no vacía de golpe el FIFO si el búfer nativo acepta
-muchos frames. Se pide el mayor entre el mínimo exigido por Android y 20 ms de
-búfer **nativo**; la capacidad real se registra, no se supone. Esto aumenta la
-latencia según el dispositivo; no cambia la reserva de síntesis. No se reduce
-calidad ni se añade una segunda síntesis.
+Desde **1.1.1**, reutiliza un array float y scratch fijos y solicita **hasta**
+5 ms de PCM por lectura. El ritmo lo marca el espacio disponible en AudioTrack:
+no usa un reloj adicional que trate de recuperar deadlines atrasados. La lectura
+puede devolver menos frames o ninguno; sólo se entregan los frames reales. Si
+faltan, el escritor espera una notificación del productor, sin insertar ceros
+ni avanzar la rampa de volumen para muestras inexistentes. El prefill también
+respeta esa disponibilidad.
+
+La señal se arma antes de comprobar el FIFO para no perder publicaciones
+concurrentes. El productor sólo despierta al escritor si éste espera PCM. La
+espera y su cancelación están fuera del callback; Pause/Stop despiertan y unen
+el escritor antes de destruir recursos. Qt/PortAudio nunca arman esa señal.
+Se pide el mayor entre el mínimo exigido por Android y 20 ms de búfer **nativo**;
+la capacidad real se registra. No se incrementó ese tamaño para esta corrección.
+No se cambia la reserva de síntesis, calidad ni número de motores.
 
 Las escrituras Java son no bloqueantes. Ante backpressure se espera en el
 escritor (hasta 1 ms o señal de cierre), fuera de RenderAudio, conservando offset
@@ -162,7 +172,11 @@ revísalos antes de compartirlos. No incluyas ROMs ni el WAV comercial en el PR.
 El log separa **FIFO** (underrun callbacks/missing frames/RMS/pico) de
 **AudioTrack nativo** (underrunCount, playbackHead, buffer/capacity, session,
 performance, atributos y ruta). En la alternativa, "callback" en la telemetría
-común cuenta pulls PCM de 5 ms, no callbacks AAudio. QAudioSink no expone esos
+común cuenta lecturas de hasta 5 ms de PCM real, no callbacks AAudio. Desde
+1.1.1, los aplazamientos por FIFO vacío y lecturas parciales se registran como
+`AudioTrack push`, con espera total/máxima, separación de lecturas, backpressure
+y frames aceptados. No equivalen a pérdida de muestras. `underrunCount` nativo
+sigue siendo necesario: cero rellenos no demuestra cero pérdidas del dispositivo. QAudioSink no expone esos
 contadores nativos; sus informes se identifican como Qt. Cambios de lista Qt y
 rutas AudioTrack se registran sin afirmar que cambie el DSP. El audio session ID
 de AudioTrack no es el token de MediaSession de la notificación.
@@ -186,3 +200,5 @@ Un Play explícito se confirma incluso si el servicio ya considera activa la
 reproducción; recuperar foco no duplica esa confirmación. La prueba añade tres
 reinicios rápidos desde la interfaz, además del cambio vivo/WAV y sus controles.
 Este cambio sólo ordena el plano de control; no altera muestras ni buffering.
+
+La investigación de microcortes y sus pruebas están en [AUDIOTRACK-BACKGROUND.md](AUDIOTRACK-BACKGROUND.md).
