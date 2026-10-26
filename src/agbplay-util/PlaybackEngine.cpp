@@ -51,7 +51,7 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
     try {
         playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
         PrimeOutput(); // PCM is available before the backend can call RenderAudio.
-        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, outputMode);
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, outputMode, false, {&PlaybackEngine::ReadAudioAvailable, &pcmReady});
     } catch (...) {
         output.reset();
         {
@@ -435,6 +435,7 @@ void PlaybackEngine::threadWorker()
                 // Space was checked before synthesis. Only the consumer can
                 // advance meanwhile, so failure is an invariant violation.
                 if (!queue.Put(pcm)) throw Xcept("Synthesis frame exceeds available audio queue space");
+                pcmReady.Signal();
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
                 producedFrames.fetch_add(pcm.size(), std::memory_order_relaxed);
                 UpdateMaximum(maxProducerWorkNs, ElapsedNs(startedAt));
@@ -537,11 +538,11 @@ void PlaybackEngine::SetOutputMode(AudioOutputMode mode, bool keepSuspended)
     output.reset();
     PrimeOutput();
     try {
-        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, mode, keepSuspended);
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, mode, keepSuspended, {&PlaybackEngine::ReadAudioAvailable, &pcmReady});
     } catch (...) {
         if (mode == AudioOutputMode::Automatic) throw;
         Debug::print("Audio mode change failed; reopening Qt output");
-        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, AudioOutputMode::Automatic, keepSuspended);
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, AudioOutputMode::Automatic, keepSuspended, {&PlaybackEngine::ReadAudioAvailable, &pcmReady});
     }
     if (keepSuspended) SuspendOutput(true);
 }
@@ -599,13 +600,30 @@ void PlaybackEngine::InvokeRun()
 
 void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 {
-    auto &self = *static_cast<PlaybackEngine *>(user);
-    const size_t frames = output.size() / 2;
-    self.callbackFrames.store(std::max<size_t>(1, frames), std::memory_order_relaxed);
+    static_cast<PlaybackEngine *>(user)->ConsumeAudio(output, true);
+}
+
+size_t PlaybackEngine::ReadAudioAvailable(void *user, std::span<float> output) noexcept
+{
+    return static_cast<PlaybackEngine *>(user)->ConsumeAudio(output, false);
+}
+
+size_t PlaybackEngine::ConsumeAudio(std::span<float> output, bool pad) noexcept
+{
+    auto &self = *this;
+    const size_t requested = output.size() / 2;
+    self.callbackFrames.store(std::max<size_t>(1, requested), std::memory_order_relaxed);
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
     const auto startedAt = std::chrono::steady_clock::now();
     const auto startedNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt.time_since_epoch()).count());
+#endif
+    // The device callback must always fill its deadline. A push writer can
+    // instead wait for publication, preserving the native PCM already queued.
+    const size_t frames = pad ? requested : self.queue.TakeAvailable(output);
+    if (!pad && !frames) return 0;
+    output = output.first(frames * 2);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
     const auto previousCallbackNs = self.lastCallbackStartNs.exchange(startedNs, std::memory_order_relaxed);
     if (previousCallbackNs != 0 && startedNs >= previousCallbackNs)
         UpdateMaximum(self.maxCallbackIntervalNs, startedNs - previousCallbackNs);
@@ -614,7 +632,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
     self.callbackCount.fetch_add(1, std::memory_order_relaxed);
     self.callbackRequestedFrames.fetch_add(frames, std::memory_order_relaxed);
 #endif
-    self.queue.Take(output);
+    if (pad) self.queue.Take(output);
     const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
     for (size_t i = 0; i + 1 < output.size(); i += 2) {
         output[i] *= self.playerThreadVolumeCur;
@@ -628,6 +646,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
         self.meterDroppedFrames.fetch_add(frames, std::memory_order_relaxed);
     UpdateMaximum(self.maxCallbackNs, ElapsedNs(startedAt));
 #endif
+    return frames;
 }
 
 void PlaybackEngine::DrainOutputMetrics()

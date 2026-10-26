@@ -9,7 +9,7 @@
 #include "Debug.hpp"
 
 #ifdef __ANDROID__
-std::unique_ptr<AudioOutput> OpenAndroidMediaOutput(uint32_t, void *, AudioOutput::Render, bool);
+std::unique_ptr<AudioOutput> OpenAndroidMediaOutput(uint32_t, void *, bool, AudioPcmPull);
 #endif
 
 namespace {
@@ -104,11 +104,11 @@ public:
     }
 };
 }
-std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t rate, void *context, Render render, AudioOutputMode mode, bool suspended)
+std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t rate, void *context, Render render, AudioOutputMode mode, bool suspended, AudioPcmPull pull)
 {
 #ifdef __ANDROID__
     if (mode == AudioOutputMode::MediaCompatibility) {
-        try { return OpenAndroidMediaOutput(rate, context, render, suspended); }
+        try { return OpenAndroidMediaOutput(rate, context, suspended, pull); }
         catch (const std::exception &error) {
             Debug::print("Audio route: requested=AudioTrack, initialization failed: {}; fallback=Qt/AAudio", error.what());
         }
@@ -116,7 +116,7 @@ std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t rate, void *context, Ren
     Debug::print("Audio route: requested={}, actual=Qt {} QAudioSink/AAudio, MEDIA/MUSIC defaults, shared, low-latency requested; native session/MMAP/performance not exposed by QAudioSink",
         mode == AudioOutputMode::Automatic ? "Automatic" : "MediaCompatibility", QT_VERSION_STR);
 #else
-    (void)mode;
+    (void)mode; (void)pull;
 #endif
     return std::make_unique<QtAudioOutput>(rate, context, render, suspended);
 }

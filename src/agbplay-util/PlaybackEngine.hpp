@@ -89,6 +89,8 @@ private:
     void PrimeOutput();
     void DrainOutputMetrics();
     static void RenderAudio(void *user, std::span<float> output) noexcept;
+    static size_t ReadAudioAvailable(void *user, std::span<float> output) noexcept;
+    size_t ConsumeAudio(std::span<float> output, bool pad) noexcept;
     void Recover(const char *message);
     std::unique_ptr<AudioOutput> output;
     uint32_t speedFactor = 64;
@@ -118,6 +120,7 @@ private:
     std::atomic<bool> songEnded = false;
 
     AudioFrameQueue queue;
+    AudioDataReady pcmReady;
     const uint32_t sampleRate;
     const AudioBufferPolicy bufferPolicy;
     std::atomic<size_t> outputNumBuffers{2};
