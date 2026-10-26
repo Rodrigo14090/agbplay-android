@@ -22,6 +22,8 @@
 #include <QInputDialog>
 #include <QScroller>
 #include <QScrollBar>
+#include <QScrollEvent>
+#include <QScrollPrepareEvent>
 #include <QWheelEvent>
 #include <fstream>
 
@@ -79,47 +81,65 @@ private slots:
     void songListTouchScroll()
     {
         QFETCH(bool, editable);
-        SonglistWidget songs("Songs", editable);
+        SonglistWidget songs("Songs", editable), original("Original", editable);
         songs.EnableTouchInterface();
-        for (int i = 0; i < 200; ++i)
-            songs.AddSong("Song " + std::to_string(i), uint16_t(i));
-        songs.resize(400, 600);
-        songs.show();
+        original.listWidget.setStyleSheet(songs.listWidget.styleSheet());
+        original.listWidget.setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+        QScroller::grabGesture(original.listWidget.viewport(), QScroller::TouchGesture);
+        for (auto *widget : {&songs, &original}) {
+            for (int i = 0; i < 200; ++i)
+                widget->AddSong("Song " + std::to_string(i), uint16_t(i));
+            widget->resize(400, 600);
+            widget->show();
+        }
         settle();
         auto &list = songs.listWidget;
         auto *scroller = QScroller::scroller(list.viewport());
-        // The second movement is wholly above the gesture threshold. Measure
-        // rendered content, not scrollbar units: 20 logical pixels must not
-        // turn into 20 rows. Hold the finger down so inertia cannot mask it.
-        scroller->handleInput(QScroller::InputPress, QPointF(160, 360), 0);
-        scroller->handleInput(QScroller::InputMove, QPointF(160, 320), 1000);
-        QTest::qWait(60);
-        const int before = list.visualItemRect(list.item(100)).top();
-        scroller->handleInput(QScroller::InputMove, QPointF(160, 300), 1500);
-        QTest::qWait(60);
-        const int distance = before - list.visualItemRect(list.item(100)).top();
-        QVERIFY2(qAbs(distance - 20) <= 2, qPrintable(QString("20px drag moved content %1px").arg(distance)));
-        scroller->handleInput(QScroller::InputRelease, QPointF(160, 300), 2000);
-        scroller->stop();
+        auto *oldScroller = QScroller::scroller(original.listWidget.viewport());
+        QCOMPARE(list.verticalScrollMode(), QAbstractItemView::ScrollPerItem);
+        QVERIFY(scroller->scrollerProperties() == oldScroller->scrollerProperties());
+        const auto drag = [](QListWidget &view) {
+            auto *kinetic = QScroller::scroller(view.viewport());
+            kinetic->handleInput(QScroller::InputPress, QPointF(160, 360), 0);
+            kinetic->handleInput(QScroller::InputMove, QPointF(160, 320), 1000);
+            QTest::qWait(60);
+            const int before = view.visualItemRect(view.item(100)).top();
+            kinetic->handleInput(QScroller::InputMove, QPointF(160, 300), 1500);
+            QTest::qWait(60);
+            const int distance = before - view.visualItemRect(view.item(100)).top();
+            kinetic->handleInput(QScroller::InputRelease, QPointF(160, 300), 2000);
+            kinetic->stop();
+            return distance;
+        };
+        const int oldDistance = drag(original.listWidget);
+        const int halfDistance = drag(list);
+        const int rowHeight = list.visualItemRect(list.item(100)).height();
+        qInfo("Original/half-speed drag: %d/%d content pixels (row height %d)", oldDistance, halfDistance, rowHeight);
+        QVERIFY(oldDistance > 0 && halfDistance > 0);
+        // ScrollPerItem rounds to whole rows: an odd number of original rows
+        // cannot be halved exactly. The error must stay within half a row.
+        QVERIFY(qAbs(halfDistance * 2 - oldDistance) <= rowHeight);
         QCOMPARE(list.currentRow(), 0);
         for (int i = 0; i < list.count(); ++i) {
             QCOMPARE(list.item(i)->data(Qt::UserRole).toUInt(), unsigned(i));
             QCOMPARE(list.item(i)->checkState(), Qt::Checked);
         }
-        // A quick flick has a finite coast and settles, rather than traversing
-        // dozens of rows or accelerating an already moving list.
-        const int start = list.verticalScrollBar()->value();
-        scroller->handleInput(QScroller::InputPress, QPointF(160, 360), 3000);
-        scroller->handleInput(QScroller::InputMove, QPointF(160, 320), 3010);
-        scroller->handleInput(QScroller::InputMove, QPointF(160, 280), 3020);
-        scroller->handleInput(QScroller::InputRelease, QPointF(160, 280), 3021);
-        QVERIFY(scroller->velocity().y() > 0);
-        QVERIFY(scroller->velocity().y() <= 0.251);
-        QTRY_COMPARE_WITH_TIMEOUT(scroller->state(), QScroller::Inactive, 1500);
-        const qreal maxCoast = scroller->pixelPerMeter().y() * 0.25 * 0.25 / (2 * 0.35);
-        const int travelled = list.verticalScrollBar()->value() - start;
-        QVERIFY(travelled > 0);
-        QVERIFY(travelled <= 80 + maxCoast + 2);
+        // Absolute position/range mapping must survive wheel/selection changes
+        // between gestures and must not restrict scrolling to half the list.
+        list.scrollToItem(list.item(100), QAbstractItemView::PositionAtTop);
+        const int value = list.verticalScrollBar()->value();
+        QScrollPrepareEvent prepare(QPointF(160, 100));
+        QApplication::sendEvent(list.viewport(), &prepare);
+        QVERIFY(prepare.isAccepted());
+        QCOMPARE(prepare.contentPos().y(), value * 2.0);
+        QCOMPARE(prepare.contentPosRange().height(), list.verticalScrollBar()->maximum() * 2.0);
+        const QPointF end(0, prepare.contentPosRange().bottom());
+        QScrollEvent bottom(end, {}, QScrollEvent::ScrollUpdated);
+        QApplication::sendEvent(list.viewport(), &bottom);
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QScrollEvent top({}, {}, QScrollEvent::ScrollFinished);
+        QApplication::sendEvent(list.viewport(), &top);
+        QCOMPARE(list.verticalScrollBar()->value(), 0);
     }
     void songListWheelAndEditing()
     {
@@ -128,8 +148,8 @@ private slots:
         const auto desktopMode = desktop.listWidget.verticalScrollMode();
         touch.EnableTouchInterface();
         QCOMPARE(desktop.listWidget.verticalScrollMode(), desktopMode);
-        // Reference uses the original row-based mode and identical touch row
-        // sizes. Compare actual content displacement, not scrollbar values.
+        // Compare the untouched mouse wheel path with the original list.
+        // Only QScroller events are scaled, never wheel events.
         SonglistWidget reference("Reference", true);
         reference.listWidget.setStyleSheet(touch.listWidget.styleSheet());
         reference.listWidget.setVerticalScrollMode(QAbstractItemView::ScrollPerItem);

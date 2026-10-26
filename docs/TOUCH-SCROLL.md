@@ -5,7 +5,35 @@ en producción sólo se activa con la interfaz Android. El escritorio conserva
 su vista y configuración originales. No se modifica ningún archivo de síntesis,
 FIFO ni salida de audio.
 
-## APK de prueba 1.1.2
+## Comportamiento actual: 1.1.3
+
+A petición del usuario, se restaura el desplazamiento por filas (`ScrollPerItem`)
+y los parámetros originales de `QScroller::TouchGesture`: umbral, velocidad,
+desaceleración, aceleración de flicks e inercia predeterminados de Qt. Se retiran
+los ajustes de 1.1.2 y su seguimiento por píxeles 1:1.
+
+Sólo el recorrido vertical generado por QScroller se multiplica por **0.5**.
+`SonglistView`, una subclase pequeña de QListWidget, adapta `ScrollPrepare` y
+`Scroll`: expone el doble del rango/posición y convierte las posiciones de vuelta
+a la mitad al consumirlas. Así se mantiene coherencia al iniciar otro gesto tras
+usar rueda, selección o reordenamiento, y sigue siendo posible llegar al final
+de la lista. No se interceptan eventos táctiles crudos, clics ni rueda. El
+escritorio no habilita esta adaptación.
+
+**1008 / 2 = 504 px** es la referencia solicitada, no un número fijo por gesto.
+Al restaurar ScrollPerItem, Qt dibuja filas completas: si la fila mide 48 px,
+504 equivale a 10.5 filas y se redondea a 10 u 11 filas (480/528 px). No se
+promete una distancia subfila exacta que el modo original no puede representar.
+El factor de 0.5 se aplica antes de ese redondeo; no depende de la interacción
+con la interfaz ni afecta al audio.
+
+Las pruebas comparan el mismo gesto con una lista original sin adaptación,
+verifican la mitad del recorrido con tolerancia de media fila, los parámetros
+originales de QScroller y ambos extremos tras cambiar de posición. Se conservan
+las pruebas de rueda, selección, casillas y reordenamiento, así como las
+repeticiones con escalas DPI 1×, 2× y 3×.
+
+## Registro anterior: APK 1.1.2 (sustituido)
 
 [APK ARM64 firmado, comprimido en ZIP](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360711708/artifacts/12668660749).
 
@@ -34,7 +62,7 @@ Los dos trabajos Linux duplicados del push seguían instalando dependencias al
 cerrar este registro; sus equivalentes del PR ya habían aprobado. No se declara
 finalizado todo el workflow de push por haber pasado esas pruebas en el PR.
 
-## Causa y corrección
+## Ajuste anterior de 1.1.2 (sustituido)
 
 `QScroller` entrega posiciones en píxeles a las barras de `QAbstractScrollArea`.
 Las listas conservaban `ScrollPerItem`, cuyas barras cuentan filas. En una
@@ -64,7 +92,7 @@ Referencias inspeccionadas: fuentes de Qt **6.11.2**,
 `src/widgets/itemviews/qlistview.cpp` (actualización de barras) y
 `src/widgets/util/qscroller{,properties}.cpp` (DPI y cinemática).
 
-## Verificación
+## Verificación anterior de 1.1.2
 
 `TestTouchUi` comprueba el desplazamiento real de contenido para un arrastre de
 20 píxeles en ambas listas, límite y finalización de la inercia, integridad de
