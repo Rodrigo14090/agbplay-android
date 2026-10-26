@@ -6,6 +6,10 @@
 #include <cstdint>
 #include <fmt/format.h>
 #include <QFileDialog>
+#include <QComboBox>
+#include <QLabel>
+#include <QScrollArea>
+#include <QScreen>
 #include <QInputDialog>
 #include <QStandardPaths>
 #include <vector>
@@ -19,6 +23,34 @@ QDialog(parent), ui(new Ui::SettingsWindow), settings(settings)
 {
     ui->setupUi(this);
 
+#ifdef Q_OS_ANDROID
+    auto *body = new QWidget(this);
+    ui->verticalLayout->removeItem(ui->verticalLayout_2);
+    body->setLayout(ui->verticalLayout_2);
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setWidget(body);
+    ui->verticalLayout->insertWidget(0, scroll, 1);
+    if (screen()) resize(std::min(480, screen()->availableGeometry().width()), std::min(650, screen()->availableGeometry().height() - 48));
+    auto *mode = new QComboBox(this);
+    mode->setObjectName("androidAudioOutputMode");
+    mode->setMinimumHeight(48);
+    mode->addItem("Automático / Qt", int(AudioOutputMode::Automatic));
+    mode->addItem("Compatibilidad multimedia / AudioTrack", int(AudioOutputMode::MediaCompatibility));
+    mode->setCurrentIndex(mode->findData(int(settings.androidAudioOutputMode)));
+    mode->setToolTip("Ruta PCM Android. No garantiza activar efectos del fabricante. Se aplica al cerrar las opciones.");
+    ui->gridLayout->addWidget(new QLabel("Salida Android", this), 4, 0);
+    ui->gridLayout->addWidget(mode, 5, 0, 1, 2);
+    auto *wav = new QPushButton("Comparar WAV por esta salida…", this);
+    wav->setObjectName("diagnosticWavButton");
+    wav->setMinimumHeight(48);
+    ui->gridLayout->addWidget(wav, 6, 0, 1, 2);
+    connect(wav, &QPushButton::clicked, this, [this] {
+        ui->buttonBox->button(QDialogButtonBox::Apply)->click();
+        accept();
+        emit diagnosticWavRequested();
+    });
+#endif
     /* init samplerate combo boxes */
     for (const auto v : standardRates) {
         const auto s = QString::fromStdString(fmt::format("{} Hz", v));
@@ -203,6 +235,10 @@ void SettingsWindow::buttonBoxButtonPressed(QAbstractButton *button)
     settings.exportPadEnd = std::clamp(ui->exportPadEndSpinBox->value(), 0.0, 100.0);
     settings.exportQuickExportDirectory = ui->exportFolderLineEdit->text().toStdWString();
     settings.exportQuickExportAsk = !ui->exportFolderGroupBox->isChecked();
+#ifdef Q_OS_ANDROID
+    if (const auto *mode = findChild<QComboBox *>("androidAudioOutputMode"))
+        settings.androidAudioOutputMode = static_cast<AudioOutputMode>(mode->currentData().toInt());
+#endif
     settings.dirty = true;
     settings.Save();
 }

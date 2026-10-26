@@ -1,7 +1,7 @@
 name: Android ARM64 and host regression
 on:
   push:
-    branches: [android/arm64-native]
+    branches: [android/arm64-native, android/audio-compatibility]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -33,6 +33,13 @@ jobs:
         env:
           AGBPLAY_UI_CAPTURE_DIR: ${{ runner.temp }}/ui-captures
         run: ./scripts/test-host.sh -DAGBPLAY_BUILD_GUI=ON
+      - name: Verify touch scrolling and mouse wheel at high DPI
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          for scale in 2 3; do
+            QT_SCALE_FACTOR="$scale" ./build-test/src/agbplay-gui/test-touch-ui songListTouchScroll songListWheelAndEditing
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -113,8 +120,9 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
+            python3 scripts/test-android-background.py qt
+            python3 scripts/test-android-background.py audiotrack
             python3 scripts/test-android-ui.py
-            python3 scripts/test-android-background.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

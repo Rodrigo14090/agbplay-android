@@ -32,7 +32,7 @@ uint64_t ElapsedNs(std::chrono::steady_clock::time_point start) noexcept
 }
 #endif
 
-PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile, uint32_t reserveMs)
+PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile, uint32_t reserveMs, AudioOutputMode outputMode)
     : playerThreadVolumeTarget(volume), playerThreadVolumeCur(volume), sampleRate(sampleRate),
       bufferPolicy(sampleRate, reserveMs), profile(profile)
 {
@@ -51,7 +51,7 @@ PlaybackEngine::PlaybackEngine(uint32_t sampleRate, float volume, const Profile 
     try {
         playerThread = std::make_unique<std::thread>(&PlaybackEngine::threadWorker, this);
         PrimeOutput(); // PCM is available before the backend can call RenderAudio.
-        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio);
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, outputMode, false, {&PlaybackEngine::ReadAudioAvailable, &pcmReady});
     } catch (...) {
         output.reset();
         {
@@ -85,6 +85,7 @@ PlaybackEngine::~PlaybackEngine()
 void PlaybackEngine::LoadSong(uint16_t songIdx)
 {
     auto func = [this, songIdx]() {
+        diagnosticWav.reset();
         trackMuted.reset();
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
@@ -99,9 +100,25 @@ void PlaybackEngine::LoadSong(uint16_t songIdx)
     InvokeAsPlayer(func);
 }
 
+void PlaybackEngine::LoadDiagnosticWav(std::unique_ptr<DiagnosticWav> wav)
+{
+    if (!suspended.load()) throw Xcept("Suspend audio before loading a diagnostic WAV");
+    InvokeAsPlayer([this, &wav] {
+        ctx->m4aMPlayAllStop();
+        diagnosticWav = std::move(wav);
+        paused = true;
+        songEnded = false;
+    });
+    DiscardBufferedAudio();
+}
+
 void PlaybackEngine::Play()
 {
     auto func = [this]() {
+        if (diagnosticWav) {
+            if (songEnded) diagnosticWav->Rewind();
+            paused = false; songEnded = false; return;
+        }
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -124,6 +141,7 @@ bool PlaybackEngine::Pause()
 {
     bool playingAgain = false;
     auto func = [this, &playingAgain]() {
+        if (diagnosticWav) { paused = !paused; playingAgain = !paused; return; }
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -151,6 +169,7 @@ bool PlaybackEngine::Pause()
 void PlaybackEngine::Stop()
 {
     auto func = [this]() {
+        if (diagnosticWav) { diagnosticWav->Rewind(); paused = true; songEnded = false; return; }
         const uint8_t playerIdx = ctx->primaryPlayer;
         if (playerIdx >= ctx->players.size())
             return;
@@ -342,6 +361,7 @@ void PlaybackEngine::threadWorker()
         if (!blockFrames || blockFrames > AudioFrameQueue::Capacity)
             throw Xcept("Invalid synthesis block size: {}", blockFrames);
         std::vector<sample> silenceBuffer(blockFrames);
+        std::vector<sample> wavBuffer(blockFrames);
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
         auto lastProducedAt = std::chrono::steady_clock::time_point{};
 #endif
@@ -392,25 +412,35 @@ void PlaybackEngine::threadWorker()
                         std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt - lastProducedAt).count()));
                 lastProducedAt = startedAt;
 #endif
-                if (!paused) ctx->m4aSoundMain();
+                if (!paused && diagnosticWav) {
+                    size_t read = diagnosticWav->Read(wavBuffer);
+                    while (read < blockFrames) {
+                        diagnosticWav->Rewind();
+                        const auto count = diagnosticWav->Read(std::span<sample>(wavBuffer).subspan(read));
+                        if (!count) throw Xcept("Diagnostic WAV contains no readable frames");
+                        read += count;
+                    }
+                } else if (!paused) ctx->m4aSoundMain();
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
                 UpdateMaximum(maxSynthesisNs, ElapsedNs(startedAt));
                 const auto visualizerAt = std::chrono::steady_clock::now();
 #endif
-                if (!paused) updateVisualizerState();
+                if (!paused && !diagnosticWav) updateVisualizerState();
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
                 UpdateMaximum(maxVisualizerNs, ElapsedNs(visualizerAt));
 #endif
                 const std::span<const sample> pcm = paused ? std::span<const sample>(silenceBuffer)
-                                                         : std::span<const sample>(ctx->masterAudioBuffer);
+                                                         : diagnosticWav ? std::span<const sample>(wavBuffer)
+                                                                         : std::span<const sample>(ctx->masterAudioBuffer);
                 // Space was checked before synthesis. Only the consumer can
                 // advance meanwhile, so failure is an invariant violation.
                 if (!queue.Put(pcm)) throw Xcept("Synthesis frame exceeds available audio queue space");
+                pcmReady.Signal();
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
                 producedFrames.fetch_add(pcm.size(), std::memory_order_relaxed);
                 UpdateMaximum(maxProducerWorkNs, ElapsedNs(startedAt));
 #endif
-                if (ctx->SongEnded() && !songEnded) {
+                if (!diagnosticWav && ctx->SongEnded() && !songEnded) {
                     ctx->m4aMPlayAllStop();
                     ctx->m4aSoundClear();
                     songEnded = true;
@@ -451,8 +481,16 @@ void PlaybackEngine::Recover(const char *message)
 
 std::string PlaybackEngine::TakeError()
 {
+    if (!output) return "No audio output available; reopen the ROM to retry";
     if (auto deviceError = output->TakeError(); !deviceError.empty())
+    {
+        if (output->Mode() == AudioOutputMode::MediaCompatibility) {
+            Debug::print("AudioTrack runtime failure: {}; attempting Qt fallback", deviceError);
+            try { SetOutputMode(AudioOutputMode::Automatic, suspended.load()); return {}; }
+            catch (const std::exception &error) { return deviceError + "; fallback failed: " + error.what(); }
+        }
         return deviceError;
+    }
     std::scoped_lock lock(errorMutex);
     return std::exchange(playbackError, {});
 }
@@ -470,6 +508,7 @@ void PlaybackEngine::PrimeOutput()
 
 void PlaybackEngine::SuspendOutput(bool suspend)
 {
+    if (!output) return;
     if (suspend) {
         // Keep supplying PCM until the device has stopped consuming it.
         output->Suspend(true);
@@ -487,7 +526,32 @@ void PlaybackEngine::SuspendOutput(bool suspend)
 
 void PlaybackEngine::DiscardBufferedAudio()
 {
+    if (output) output->DiscardPending();
     InvokeAsPlayer([this] { queue.DiscardPending(); ++scheduleRevision; });
+}
+
+void PlaybackEngine::SetOutputMode(AudioOutputMode mode, bool keepSuspended)
+{
+    // UI/control thread only. Stop and join the old consumer before opening
+    // another. The one producer, mixer, gain and FIFO survive the switch.
+    if (output) SuspendOutput(true);
+    output.reset();
+    PrimeOutput();
+    try {
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, mode, keepSuspended, {&PlaybackEngine::ReadAudioAvailable, &pcmReady});
+    } catch (...) {
+        if (mode == AudioOutputMode::Automatic) throw;
+        Debug::print("Audio mode change failed; reopening Qt output");
+        output = AudioOutput::Open(sampleRate, this, &PlaybackEngine::RenderAudio, AudioOutputMode::Automatic, keepSuspended, {&PlaybackEngine::ReadAudioAvailable, &pcmReady});
+    }
+    if (keepSuspended) SuspendOutput(true);
+}
+
+void PlaybackEngine::PollOutputDiagnostics()
+{
+    if (!output) return;
+    try { output->PollDiagnostics(); }
+    catch (const std::exception &error) { Debug::print("Output diagnostics unavailable: {}", error.what()); }
 }
 
 void PlaybackEngine::updateVisualizerState()
@@ -536,13 +600,30 @@ void PlaybackEngine::InvokeRun()
 
 void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
 {
-    auto &self = *static_cast<PlaybackEngine *>(user);
-    const size_t frames = output.size() / 2;
-    self.callbackFrames.store(std::max<size_t>(1, frames), std::memory_order_relaxed);
+    static_cast<PlaybackEngine *>(user)->ConsumeAudio(output, true);
+}
+
+size_t PlaybackEngine::ReadAudioAvailable(void *user, std::span<float> output) noexcept
+{
+    return static_cast<PlaybackEngine *>(user)->ConsumeAudio(output, false);
+}
+
+size_t PlaybackEngine::ConsumeAudio(std::span<float> output, bool pad) noexcept
+{
+    auto &self = *this;
+    const size_t requested = output.size() / 2;
+    self.callbackFrames.store(std::max<size_t>(1, requested), std::memory_order_relaxed);
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
     const auto startedAt = std::chrono::steady_clock::now();
     const auto startedNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(startedAt.time_since_epoch()).count());
+#endif
+    // The device callback must always fill its deadline. A push writer can
+    // instead wait for publication, preserving the native PCM already queued.
+    const size_t frames = pad ? requested : self.queue.TakeAvailable(output);
+    if (!pad && !frames) return 0;
+    output = output.first(frames * 2);
+#if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
     const auto previousCallbackNs = self.lastCallbackStartNs.exchange(startedNs, std::memory_order_relaxed);
     if (previousCallbackNs != 0 && startedNs >= previousCallbackNs)
         UpdateMaximum(self.maxCallbackIntervalNs, startedNs - previousCallbackNs);
@@ -551,7 +632,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
     self.callbackCount.fetch_add(1, std::memory_order_relaxed);
     self.callbackRequestedFrames.fetch_add(frames, std::memory_order_relaxed);
 #endif
-    self.queue.Take(output);
+    if (pad) self.queue.Take(output);
     const float target = self.playerThreadVolumeTarget.load(std::memory_order_relaxed);
     for (size_t i = 0; i + 1 < output.size(); i += 2) {
         output[i] *= self.playerThreadVolumeCur;
@@ -565,6 +646,7 @@ void PlaybackEngine::RenderAudio(void *user, std::span<float> output) noexcept
         self.meterDroppedFrames.fetch_add(frames, std::memory_order_relaxed);
     UpdateMaximum(self.maxCallbackNs, ElapsedNs(startedAt));
 #endif
+    return frames;
 }
 
 void PlaybackEngine::DrainOutputMetrics()

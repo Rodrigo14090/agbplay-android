@@ -3,6 +3,10 @@
 #include "SyntheticGsf.hpp"
 #include "PlaybackEngine.hpp"
 #include "DocumentAccess.hpp"
+#include "Settings.hpp"
+#include "SettingsWindow.hpp"
+#include "OS.hpp"
+#include <nlohmann/json.hpp>
 
 #include <QAction>
 #include <QDir>
@@ -16,6 +20,11 @@
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QInputDialog>
+#include <QScroller>
+#include <QScrollBar>
+#include <QScrollEvent>
+#include <QScrollPrepareEvent>
+#include <QWheelEvent>
 #include <fstream>
 
 class TestTouchUi : public QObject
@@ -62,6 +71,153 @@ private slots:
         qputenv("XDG_CONFIG_HOME", config.path().toUtf8());
         QCoreApplication::setOrganizationName("agbplay");
         QCoreApplication::setApplicationName("agbplay-ui-test");
+    }
+    void songListTouchScroll_data()
+    {
+        QTest::addColumn<bool>("editable");
+        QTest::newRow("songs") << false;
+        QTest::newRow("playlist") << true;
+    }
+    void songListTouchScroll()
+    {
+        QFETCH(bool, editable);
+        SonglistWidget songs("Songs", editable), original("Original", editable);
+        songs.EnableTouchInterface();
+        original.listWidget.setStyleSheet(songs.listWidget.styleSheet());
+        original.listWidget.setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+        QScroller::grabGesture(original.listWidget.viewport(), QScroller::TouchGesture);
+        for (auto *widget : {&songs, &original}) {
+            for (int i = 0; i < 200; ++i)
+                widget->AddSong("Song " + std::to_string(i), uint16_t(i));
+            widget->resize(400, 600);
+            widget->show();
+        }
+        settle();
+        auto &list = songs.listWidget;
+        auto *scroller = QScroller::scroller(list.viewport());
+        auto *oldScroller = QScroller::scroller(original.listWidget.viewport());
+        QCOMPARE(list.verticalScrollMode(), QAbstractItemView::ScrollPerItem);
+        QVERIFY(scroller->scrollerProperties() == oldScroller->scrollerProperties());
+        const auto drag = [](QListWidget &view) {
+            auto *kinetic = QScroller::scroller(view.viewport());
+            kinetic->handleInput(QScroller::InputPress, QPointF(160, 360), 0);
+            kinetic->handleInput(QScroller::InputMove, QPointF(160, 320), 1000);
+            QTest::qWait(60);
+            const int before = view.visualItemRect(view.item(100)).top();
+            kinetic->handleInput(QScroller::InputMove, QPointF(160, 300), 1500);
+            QTest::qWait(60);
+            const int distance = before - view.visualItemRect(view.item(100)).top();
+            kinetic->handleInput(QScroller::InputRelease, QPointF(160, 300), 2000);
+            kinetic->stop();
+            return distance;
+        };
+        const int oldDistance = drag(original.listWidget);
+        const int halfDistance = drag(list);
+        const int rowHeight = list.visualItemRect(list.item(100)).height();
+        qInfo("Original/half-speed drag: %d/%d content pixels (row height %d)", oldDistance, halfDistance, rowHeight);
+        QVERIFY(oldDistance > 0 && halfDistance > 0);
+        // ScrollPerItem rounds to whole rows: an odd number of original rows
+        // cannot be halved exactly. The error must stay within half a row.
+        QVERIFY(qAbs(halfDistance * 2 - oldDistance) <= rowHeight);
+        QCOMPARE(list.currentRow(), 0);
+        for (int i = 0; i < list.count(); ++i) {
+            QCOMPARE(list.item(i)->data(Qt::UserRole).toUInt(), unsigned(i));
+            QCOMPARE(list.item(i)->checkState(), Qt::Checked);
+        }
+        // Absolute position/range mapping must survive wheel/selection changes
+        // between gestures and must not restrict scrolling to half the list.
+        list.scrollToItem(list.item(100), QAbstractItemView::PositionAtTop);
+        const int value = list.verticalScrollBar()->value();
+        QScrollPrepareEvent prepare(QPointF(160, 100));
+        QApplication::sendEvent(list.viewport(), &prepare);
+        QVERIFY(prepare.isAccepted());
+        QCOMPARE(prepare.contentPos().y(), value * 2.0);
+        QCOMPARE(prepare.contentPosRange().height(), list.verticalScrollBar()->maximum() * 2.0);
+        const QPointF end(0, prepare.contentPosRange().bottom());
+        QScrollEvent bottom(end, {}, QScrollEvent::ScrollUpdated);
+        QApplication::sendEvent(list.viewport(), &bottom);
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QScrollEvent top({}, {}, QScrollEvent::ScrollFinished);
+        QApplication::sendEvent(list.viewport(), &top);
+        QCOMPARE(list.verticalScrollBar()->value(), 0);
+    }
+    void songListWheelAndEditing()
+    {
+        SonglistWidget desktop("Desktop", true), touch("Touch", true);
+        QVERIFY(!QScroller::hasScroller(desktop.listWidget.viewport()));
+        const auto desktopMode = desktop.listWidget.verticalScrollMode();
+        touch.EnableTouchInterface();
+        QCOMPARE(desktop.listWidget.verticalScrollMode(), desktopMode);
+        // Compare the untouched mouse wheel path with the original list.
+        // Only QScroller events are scaled, never wheel events.
+        SonglistWidget reference("Reference", true);
+        reference.listWidget.setStyleSheet(touch.listWidget.styleSheet());
+        reference.listWidget.setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+        for (auto *songs : {&touch, &reference}) {
+            for (int i = 0; i < 100; ++i)
+                songs->AddSong("Song " + std::to_string(i), uint16_t(i));
+            songs->resize(400, 600);
+            songs->show();
+        }
+        settle();
+        for (auto *songs : {&touch, &reference})
+            songs->listWidget.scrollToItem(songs->listWidget.item(30), QAbstractItemView::PositionAtTop);
+        for (int delta : {-120, -120, 120}) {
+            int distances[2];
+            int index = 0;
+            for (auto *songs : {&touch, &reference}) {
+                auto &list = songs->listWidget;
+                const int before = list.visualItemRect(list.item(50)).top();
+                const auto pos = list.viewport()->rect().center();
+                QWheelEvent wheel(pos, list.viewport()->mapToGlobal(pos), {}, QPoint(0, delta),
+                                  Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+                QApplication::sendEvent(list.viewport(), &wheel);
+                QVERIFY(wheel.isAccepted());
+                distances[index++] = before - list.visualItemRect(list.item(50)).top();
+            }
+            QCOMPARE(distances[0], distances[1]);
+        }
+        // Click selection and checkboxes still use the original QListWidget
+        // handlers. Playlist up/down must retain IDs and the playing marker.
+        touch.SelectSong(32);
+        touch.listWidget.scrollToItem(touch.listWidget.item(32), QAbstractItemView::PositionAtCenter);
+        settle();
+        const auto rowRect = touch.listWidget.visualItemRect(touch.listWidget.item(32));
+        QTest::mouseClick(touch.listWidget.viewport(), Qt::LeftButton, Qt::NoModifier, rowRect.center());
+        QCOMPARE(touch.listWidget.currentRow(), 32);
+        QTest::mouseClick(touch.listWidget.viewport(), Qt::LeftButton, Qt::NoModifier,
+                          QPoint(rowRect.left() + 14, rowRect.center().y()));
+        QCOMPARE(touch.listWidget.item(32)->checkState(), Qt::Unchecked);
+        auto *more = touch.findChild<QToolButton *>();
+        QVERIFY(more && more->menu());
+        QAction *down = nullptr;
+        for (auto *action : more->menu()->actions())
+            if (action->text() == "Bajar canción") down = action;
+        QVERIFY(down);
+        down->trigger();
+        QCOMPARE(touch.listWidget.currentRow(), 33);
+        QCOMPARE(touch.GetSelectedSong(), 33);
+        QCOMPARE(touch.listWidget.item(33)->data(Qt::UserRole).toUInt(), 32u);
+        QCOMPARE(touch.listWidget.item(33)->checkState(), Qt::Unchecked);
+        QCOMPARE(touch.listWidget.dragDropMode(), QAbstractItemView::InternalMove);
+    }
+    void audioPreferenceRoundTrip()
+    {
+        Settings saved; saved.Load();
+        QCOMPARE(saved.androidAudioOutputMode, AudioOutputMode::Automatic);
+        saved.androidAudioOutputMode = AudioOutputMode::MediaCompatibility;
+        saved.dirty = true; saved.Save();
+        Settings loaded; loaded.Load();
+        QCOMPARE(loaded.androidAudioOutputMode, AudioOutputMode::MediaCompatibility);
+        const auto path = OS::GetLocalConfigDirectory() / "agbplay" / "config.json";
+        auto json = nlohmann::json::parse(std::ifstream(path));
+        json["androidAudioOutputMode"] = 12345;
+        std::ofstream(path) << json;
+        loaded.Load();
+        QCOMPARE(loaded.androidAudioOutputMode, AudioOutputMode::Automatic);
+        loaded.dirty = true; loaded.Save();
+        SettingsWindow preferences(nullptr, loaded);
+        QVERIFY(!preferences.findChild<QWidget *>("androidAudioOutputMode")); // Android-only control
     }
     void openActionAndPlaylistStayDistinct()
     {

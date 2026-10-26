@@ -155,7 +155,9 @@ PortAudioOutput::~PortAudioOutput()
 }
 
 } // namespace
-std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t rate, void *context, Render render)
+std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t rate, void *context, Render render, AudioOutputMode, bool suspended, AudioPcmPull)
 {
-    return std::make_unique<PortAudioOutput>(rate, context, render);
+    auto result = std::make_unique<PortAudioOutput>(rate, context, render);
+    if (suspended) result->Suspend(true);
+    return result;
 }

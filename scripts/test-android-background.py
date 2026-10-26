@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 import subprocess
 import time
+import sys
+MODE = sys.argv[1] if len(sys.argv) > 1 else "qt"
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "build-android-ui/results/background"
+OUT = ROOT / ("build-android-ui/results/background-" + MODE)
 PACKAGE = "org.agbplay.android"
 
 def adb(*args):
@@ -32,6 +34,11 @@ def snapshot(name):
     (OUT / f"{name}.json").write_text(json.dumps(value, indent=2))
     (OUT / f"{name}-services.txt").write_bytes(adb("shell", "dumpsys", "activity", "services", PACKAGE))
     (OUT / f"{name}-power.txt").write_bytes(adb("shell", "dumpsys", "power"))
+    transport = adb("exec-out", "run-as", PACKAGE, "cat", "files/background-audio.log")
+    (OUT / "audio-transport.log").write_bytes(transport)
+    native = [line for line in transport.decode(errors="replace").splitlines() if "AudioTrack native:" in line]
+    if native:
+        print(f"NATIVE {name}: {native[-1]}", flush=True)
     return value
 
 def active_wake_locks():
@@ -78,16 +85,17 @@ def main():
     try:
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "wm", "dismiss-keyguard")
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity", "--es", "outputMode", MODE)
         continuous("foreground", 4)
+        assert state()["backend"] == MODE, state()
         services = adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         assert "PlaybackService" in services and "isForeground=true" in services, services
         adb("shell", "input", "keyevent", "KEYCODE_HOME")
         wait_for(lambda s: s["applicationState"] != 4)
-        continuous("home")
+        continuous("home", 30 if MODE == "audiotrack" else 12)
         assert state()["uiTaskRuns"] == 0, state()
         adb("shell", "input", "keyevent", "KEYCODE_SLEEP")
-        continuous("screen-off")
+        continuous("screen-off", 60 if MODE == "audiotrack" else 12)
         power = adb("shell", "dumpsys", "power").decode()
         assert "mWakefulness=Asleep" in power or "mWakefulness=Dozing" in power, power
         media("pause")
@@ -122,12 +130,44 @@ def main():
         button = state()
         adb("shell", "input", "tap", button["playX"], button["playY"])
         continuous("restart-after-stop", 4)
+        def command(value):
+            before = state()["sequence"]
+            subprocess.run(["adb", "shell", "run-as", PACKAGE, "tee", "files/output-command.pending"], input=value.encode(), stdout=subprocess.DEVNULL, check=True)
+            adb("shell", "run-as", PACKAGE, "mv", "files/output-command.pending", "files/output-command.txt")
+            wait_for(lambda s: s["sequence"] > before and s["lastCommand"] == value)
+        for _ in range(3):
+            command("restart")
+            wait_for(lambda s: s["playing"] and s["rms"] > 0.00001)
+        other = "qt" if MODE == "audiotrack" else "audiotrack"
+        command(other)
+        wait_for(lambda s: s["backend"] == other)
+        continuous("switch-to-" + other, 4)
+        command(MODE)
+        wait_for(lambda s: s["backend"] == MODE)
+        continuous("switch-back-" + MODE, 4)
+        command("mute")
+        wait_for(lambda s: s["playing"] and s["rms"] < 0.000001)
+        command("unmute")
+        continuous("track-unmute", 4)
+        command("wav")
+        wait_for(lambda s: s["diagnosticWav"])
+        continuous("diagnostic-wav", 4)
+        command("song")
+        wait_for(lambda s: not s["diagnosticWav"])
+        continuous("return-to-mp2k", 4)
+        command("gsf")
+        wait_for(lambda s: s["gsf"])
+        continuous("gsf-minigsf-song-two", 4)
         media("stop")
         paused("final-stop")
         assert "PlaybackService" not in adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         print("PASS background lifecycle: service/notification controls, focus and safe stop", flush=True)
     finally:
-        (OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))
+        log = adb("logcat", "-d")
+        (OUT / "logcat.txt").write_bytes(log)
+        if sys.exc_info()[0] is not None:
+            print("Android audio failure log:", flush=True)
+            print("\n".join(line for line in log.decode(errors="replace").splitlines() if any(tag in line for tag in ("agbplay", "AudioTrack", "AndroidRuntime")))[-18000:], flush=True)
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "am", "force-stop", PACKAGE)
         adb("shell", "am", "force-stop", "org.agbplay.saftest")

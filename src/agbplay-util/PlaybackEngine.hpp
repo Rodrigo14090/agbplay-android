@@ -6,6 +6,7 @@
 #include "AudioPcmStatistics.hpp"
 #include "MP2KContext.hpp"
 #include "Profile.hpp"
+#include "DiagnosticWav.hpp"
 
 #include <atomic>
 #include <bitset>
@@ -49,12 +50,15 @@ public:
         double elapsedSeconds;
     };
     PlaybackEngine(uint32_t sampleRate, float volume, const Profile &profile,
-                   uint32_t reserveMs = AudioBufferPolicy::DefaultReserveMs);
+                   uint32_t reserveMs = AudioBufferPolicy::DefaultReserveMs,
+                   AudioOutputMode outputMode = AudioOutputMode::Automatic);
     PlaybackEngine(const PlaybackEngine &) = delete;
     PlaybackEngine &operator=(const PlaybackEngine &) = delete;
     ~PlaybackEngine();
 
     void LoadSong(uint16_t songIdx);
+    void LoadDiagnosticWav(std::unique_ptr<DiagnosticWav> wav);
+    uint32_t SampleRate() const { return sampleRate; }
     void Play();
     bool Pause();
     void Stop();
@@ -71,6 +75,9 @@ public:
     void SetPlaybackVolume(float volume);
     void SuspendOutput(bool suspend);
     void DiscardBufferedAudio(); // control thread, after suspending output; prefill resumes with fresh PCM
+    void SetOutputMode(AudioOutputMode mode, bool keepSuspended);
+    AudioOutputMode OutputMode() const { return output ? output->Mode() : AudioOutputMode::Automatic; }
+    void PollOutputDiagnostics();
     std::string TakeError();
     AudioDiagnostics TakeAudioDiagnostics() noexcept;
 
@@ -82,11 +89,14 @@ private:
     void PrimeOutput();
     void DrainOutputMetrics();
     static void RenderAudio(void *user, std::span<float> output) noexcept;
+    static size_t ReadAudioAvailable(void *user, std::span<float> output) noexcept;
+    size_t ConsumeAudio(std::span<float> output, bool pad) noexcept;
     void Recover(const char *message);
     std::unique_ptr<AudioOutput> output;
     uint32_t speedFactor = 64;
     std::bitset<16> trackMuted;    // TODO replace 16 with constant
     bool paused = false;
+    std::unique_ptr<DiagnosticWav> diagnosticWav;
     std::unique_ptr<MP2KContext> ctx;
 
     MP2KVisualizerState visualizerStatePlayer;
@@ -110,6 +120,7 @@ private:
     std::atomic<bool> songEnded = false;
 
     AudioFrameQueue queue;
+    AudioDataReady pcmReady;
     const uint32_t sampleRate;
     const AudioBufferPolicy bufferPolicy;
     std::atomic<size_t> outputNumBuffers{2};

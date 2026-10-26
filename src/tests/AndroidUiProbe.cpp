@@ -65,6 +65,8 @@ int main(int argc, char **argv)
         const QJsonObject state{{"qt", qVersion()}, {"open", describe(open)}, {"menu", describe(menu)},
                                 {"applicationState", int(app.applicationState())},
                                 {"updatesEnabled", window.updatesEnabled()}, {"enabled", window.isEnabled()},
+                                {"exposed", window.windowHandle() && window.windowHandle()->isExposed()},
+                                {"inputFocus", app.focusWindow() == window.windowHandle()},
                                 {"folder", folderState}, {"folderRequests", folderRequests},
                                 {"nativeMenuBar", window.menuBar()->isNativeMenuBar()},
                                 {"actionBarChecked", actionBarChecked}, {"actionBarPresent", actionBarPresent},

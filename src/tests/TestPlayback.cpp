@@ -3,6 +3,7 @@
 #include "PlaybackEngine.hpp"
 #include "Rom.hpp"
 #include <array>
+#include <bit>
 #include <atomic>
 #include <chrono>
 #include <fstream>
@@ -12,24 +13,51 @@
 
 namespace {
 bool failNextOpen = false;
+std::atomic<bool> failRuntime{false};
+int activeOutputs = 0;
+AudioPcmPull lastPull;
+void *lastContext = nullptr;
+std::array<float, 1920> captured{};
+std::atomic<size_t> captureCount{captured.size()};
 class TestOutput final : public AudioOutput {
     std::atomic<bool> quit{false}, suspended{false};
+    std::mutex renderMutex;
+    AudioOutputMode mode;
     std::thread consumer;
 public:
-    TestOutput(void *context, Render render) : consumer([this, context, render] {
-        std::array<float, 192> buffer;
+    TestOutput(void *context, Render render, AudioOutputMode mode, bool initialSuspended, AudioPcmPull pull) : suspended(initialSuspended), mode(mode), consumer([this, context, render, pull] {
+        std::array<float, 480> buffer;
         while (!quit) {
-            if (!suspended) render(context, buffer);
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            { std::scoped_lock lock(renderMutex);
+            if (!suspended) {
+                const bool push = this->mode == AudioOutputMode::MediaCompatibility && pull.read;
+                const auto requested = std::span<float>(buffer).first(push ? 480 : 192);
+                const size_t actual = push ? pull.read(context, requested) * 2 : (render(context, requested), requested.size());
+                const auto offset = captureCount.load();
+                if (offset < captured.size()) {
+                    const auto count = std::min(actual, captured.size() - offset);
+                    std::copy_n(buffer.data(), count, captured.data() + offset);
+                    captureCount.store(offset + count);
+                }
+            }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(this->mode == AudioOutputMode::MediaCompatibility ? 5 : 2));
         }
-    }) {}
-    ~TestOutput() override { quit = true; consumer.join(); }
-    void Suspend(bool s) override { suspended = s; }
+    }) { ++activeOutputs; }
+    ~TestOutput() override { quit = true; consumer.join(); --activeOutputs; }
+    void Suspend(bool s) override { suspended = s; if (s) { std::scoped_lock lock(renderMutex); } }
+    AudioOutputMode Mode() const override { return mode; }
+    std::string TakeError() override {
+        return mode == AudioOutputMode::MediaCompatibility && failRuntime.exchange(false) ? "injected writer error" : "";
+    }
 };
 }
-std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t, void *context, Render render) {
+std::unique_ptr<AudioOutput> AudioOutput::Open(uint32_t, void *context, Render render, AudioOutputMode mode, bool suspended, AudioPcmPull pull) {
     if (failNextOpen) { failNextOpen = false; throw std::runtime_error("Injected device-open failure"); }
-    return std::make_unique<TestOutput>(context, render);
+    if (activeOutputs) throw std::runtime_error("Two active outputs");
+    lastPull = pull; lastContext = context;
+    auto result = std::make_unique<TestOutput>(context, render, mode, suspended, pull);
+    return result;
 }
 int main(int argc, char **argv) {
     std::cout << std::unitbuf; // retain measurements even if an assertion aborts
@@ -91,8 +119,65 @@ int main(int argc, char **argv) {
             engine.SuspendOutput(false);
             std::this_thread::sleep_for(std::chrono::milliseconds(3));
         }
+        engine.SetOutputMode(AudioOutputMode::MediaCompatibility, false);
+        if (engine.OutputMode() != AudioOutputMode::MediaCompatibility) throw std::runtime_error("mode selection failed");
+        failRuntime = true;
+        if (!engine.TakeError().empty() || engine.OutputMode() != AudioOutputMode::Automatic)
+            throw std::runtime_error("runtime fallback failed");
+        failNextOpen = true;
+        engine.SetOutputMode(AudioOutputMode::MediaCompatibility, true);
+        if (engine.OutputMode() != AudioOutputMode::Automatic) throw std::runtime_error("initialization fallback failed");
+        engine.SuspendOutput(false);
+        for (int change = 0; change < 12; ++change) {
+            engine.SetOutputMode(change % 2 ? AudioOutputMode::Automatic : AudioOutputMode::MediaCompatibility, change % 3 == 0);
+            engine.SuspendOutput(false);
+            engine.Mute(0, change % 2); engine.LoadSong(0); engine.Play();
+        }
         const auto lifecycle = engine.TakeAudioDiagnostics();
         checkContinuity(lifecycle);
+    }
+    for (auto outputMode : {AudioOutputMode::Automatic, AudioOutputMode::MediaCompatibility}) {
+        // 240 stereo float frames, with exact powers-of-two amplitudes.
+        std::vector<uint8_t> wav(44 + 240 * 8);
+        std::copy_n("RIFF", 4, wav.data()); Fixture::Put32(wav, 4, wav.size() - 8);
+        std::copy_n("WAVEfmt ", 8, wav.data() + 8); Fixture::Put32(wav, 16, 16);
+        wav[20] = 3; wav[22] = 2; Fixture::Put32(wav, 24, 48000); Fixture::Put32(wav, 28, 48000 * 8);
+        wav[32] = 8; wav[34] = 32; std::copy_n("data", 4, wav.data() + 36); Fixture::Put32(wav, 40, 240 * 8);
+        for (size_t i = 0; i < 240; ++i) {
+            const float value = float(i % 16) / 32;
+            Fixture::Put32(wav, 44 + i * 8, std::bit_cast<uint32_t>(value));
+            Fixture::Put32(wav, 48 + i * 8, std::bit_cast<uint32_t>(-value));
+        }
+        const auto wavPath = path.string() + ".wav";
+        Cleanup removeWav{wavPath};
+        std::ofstream(wavPath, std::ios::binary).write(reinterpret_cast<const char *>(wav.data()), wav.size());
+        PlaybackEngine engine(48000, 1, profile, 30, outputMode);
+        engine.SuspendOutput(true);
+        engine.LoadDiagnosticWav(std::make_unique<DiagnosticWav>(wavPath, 48000));
+        const bool push = outputMode == AudioOutputMode::MediaCompatibility;
+        if (push) {
+            engine.SetPlaybackVolume(0.5f);
+            std::array<float, 480> untouched; untouched.fill(42);
+            if (lastPull.read(lastContext, untouched) != 0) throw std::runtime_error("Empty push read fabricated PCM");
+            for (float value : untouched) if (value != 42) throw std::runtime_error("Empty push read changed PCM");
+        }
+        engine.Play();
+        captureCount = 0;
+        engine.SuspendOutput(false);
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (captureCount.load() < captured.size() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        engine.SuspendOutput(true);
+        if (captureCount != captured.size()) throw std::runtime_error("WAV transport timeout");
+        float gain = 1;
+        for (size_t i = 0; i < captured.size() / 2; ++i) {
+            const float value = float((i % 240) % 16) / 32 * gain;
+            if (push) gain += 0.001f * (0.5f - gain);
+            if (captured[i*2] != value || captured[i*2+1] != -value)
+                throw std::runtime_error("WAV PCM altered, reordered or padded at loop boundary");
+        }
+        std::cout << "WAV producer/FIFO/gain transport (" << (push ? "push" : "callback") << "): 960 stereo frames, sample difference=0\n";
+        engine.LoadSong(0); engine.Play(); engine.SuspendOutput(false);
     }
     for (int cycle = 0; cycle < 20; ++cycle) {
         PlaybackEngine engine(48000, 1, profile, cycle % 2 ? 0 : 30);
