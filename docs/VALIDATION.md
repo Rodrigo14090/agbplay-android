@@ -1,5 +1,87 @@
 # Validación de la entrega
 
+## AudioTrack sin microhuecos por relleno (1.1.1 experimental)
+
+[APK ARM64 firmado 1.1.1-audio-compat-dev (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40253417196/artifacts/12621469462).
+
+- Fuente exacta: `dd374f78a22361722b2bf78a8e55ad037c7bc7f6`.
+- SHA-256 APK: `45c2a6ab0f583dcdc04a84cba5985972920e9a08a60f3a42c1ba068947be635e`.
+- versionCode **12**, mínimo API 28, target API 35, compile SDK 36;
+  Qt Multimedia 6.11.2 y NDK 27.2.12479018. Firma de desarrollo v2 verificada,
+  17 bibliotecas AArch64 alineadas a 16 KiB.
+- [Workflow del APK](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40253417196),
+  [PR #2](https://github.com/Rodrigo14090/agbplay-android/pull/2).
+
+El usuario confirmó el sonido de AudioTrack en primer plano y aportó un fragmento
+con microcortes en segundo plano: 40 intervalos/204.33 s, **38** lecturas con
+**5480 frames** no disponibles, aunque **todos los underrunCount nativos eran 0**.
+Se identificó la inserción de ceros del callback reutilizado por el escritor
+push. Los plazos de 5 ms atrasados provocaban lecturas consecutivas cuando aún
+se podía esperar PCM sin agotar AudioTrack. [Análisis y procedimiento de prueba](AUDIOTRACK-BACKGROUND.md).
+
+AudioTrack ahora lee únicamente PCM disponible y espera la publicación del
+productor cuando falta. Lo gobierna la contrapresión nativa, sin recuperar un
+reloj independiente. La señal se arma antes de leer; sus transiciones mantienen
+una cadena acquire/release también al desarmar/rearmar en ARM. Pause/Stop cancelan
+la espera. Se conservan la clase Java, atributos/ruta, búferes, reserva de 30 ms,
+volumen, MP2K y remuestreadores. Se añade TakeAvailable al FIFO conservando Take
+para callbacks. El callback Qt continúa con su contrato anterior; ambos caminos
+comparten ganancia y medición, sin avanzar volumen para muestras inexistentes.
+
+Verificado hasta preparar este registro:
+
+- Linux **8/8 CTest** local, incluyendo el nuevo audio-push, GBA/GSF, perfiles,
+  reproducción, WAV, paridad PCM y controles. CI normal del APK **7/7** y GUI/motor
+  **8/8**, motor sanitizado **7/7**. APK y SAF/instrumentación Android **11/11**
+  aprobados. Los **seis trabajos del workflow del APK están aprobados**.
+- ASan/UBSan/LeakSanitizer: reproducción y audio-push **2/2**, sin supresiones.
+  ThreadSanitizer: **2/2** en la revisión final de la señal, sin carreras.
+- Modelo anterior: **484 frames** de relleno con **cero pérdidas nativas** en 30 s.
+  Nuevo modelo: cero relleno y cero pérdidas nativas en nueve casos de 30 s con
+  bloques 200/240/400, búfer 1924 y demoras de 2.2/10/22 ms. Un retraso excesivo de
+  60 ms produce pérdidas nativas detectables: no se ocultan contando sólo el FIFO.
+- Publicación/lectura concurrente de **400000 frames** con cancelación, límites,
+  lecturas vacías/parciales y descarte. Productor real: **960 frames estéreo**
+  idénticos a la referencia por callback y push, incluida la ganancia después de
+  una lectura vacía. Los parámetros y el procesamiento de síntesis no cambian.
+
+El probe Android aprobó ambos modos y amplió AudioTrack a **30 s** oculto y
+**60 s** con pantalla apagada. También pasaron foco, pausa/reanudación, cambios de
+modo, controles por pista, WAV, GSF/MINIGSF y cierre. Los cuatro escenarios de
+interfaz conservan toques ADB reales y ahora exigen exposición y foco de la ventana;
+el audio se ejecuta antes de esa comprobación independiente.
+
+| AudioTrack, emulador API 35 x86_64 | Frames reales acumulados al terminar | RMS final | Rellenos FIFO acumulados | underrunCount nativo |
+| --- | ---: | ---: | ---: | ---: |
+| Primer plano, 4 s | 231760 | 0.081948 | 0 | 0 |
+| Inicio / app oculta, 30 s | 1719160 | 0.100111 | 0 | 0 |
+| Pantalla apagada, 60 s | 4623120 | 0.084168 | 0 | 0 |
+
+Durante ese tramo continuo AudioTrack, la sesión se mantuvo estable, float32
+estéreo a 48 kHz, MEDIA/MUSIC, performance 0 y ruta de altavoz virtual. El emulador
+exigió **4360 frames (90.83 ms)** de búfer nativo, frente a **1924 (40.08 ms)** en
+la tablet del registro: la política Java no cambió; son mínimos distintos de cada
+plataforma. La simulación usa deliberadamente 1924 para cubrir el tamaño real
+reportado. El resultado del emulador no certifica ese presupuesto en la MatePad.
+
+El contador FIFO del recorrido que arranca en AudioTrack aumentó a 2 al cambiar
+expresamente a Qt y se mantuvo en 2 al regresar a AudioTrack. El recorrido Qt
+conservó pérdidas del host virtual (48 al terminar), registradas sin atribuirlas a
+la señal nueva ni ocultarlas. No se afirma cero pérdidas en todas las rutas.
+[Estados y registro nativo real por intervalo](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40253417196/artifacts/12621388983),
+incluido `audio-transport.log`.
+
+Las esperas/lecturas parciales se miden como contrapresión, por separado de la
+pérdida del dispositivo. Cero relleno del FIFO no certifica cero underruns nativos
+ni una escucha sin microcortes.
+
+Todo vive en `android/audio-compatibility`. Se conserva la referencia experimental
+previa `94cc5fad67b59d534d978aa3cedbf691163d5d24`, y las ramas estables
+`android/arm64-native` (`6ca136e06e758d9c9d441d2c013d893214d868b8`) y `main`
+(`0b87da48d2502da359e45718eec8566ac40fa9d7`) siguen sin modificaciones.
+La eliminación de los microcortes en la MatePad requiere repetir la prueba física;
+no se afirma haberla realizado con las pruebas sintéticas o del emulador.
+
 ## Salida multimedia Android experimental (rama independiente)
 
 [APK ARM64 1.1.0-audio-compat-dev firmado (ZIP de distribución)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/39886302897/artifacts/12472742751).
