@@ -34,6 +34,11 @@ def snapshot(name):
     (OUT / f"{name}.json").write_text(json.dumps(value, indent=2))
     (OUT / f"{name}-services.txt").write_bytes(adb("shell", "dumpsys", "activity", "services", PACKAGE))
     (OUT / f"{name}-power.txt").write_bytes(adb("shell", "dumpsys", "power"))
+    transport = adb("exec-out", "run-as", PACKAGE, "cat", "files/background-audio.log")
+    (OUT / "audio-transport.log").write_bytes(transport)
+    native = [line for line in transport.decode(errors="replace").splitlines() if "AudioTrack native:" in line]
+    if native:
+        print(f"NATIVE {name}: {native[-1]}", flush=True)
     return value
 
 def active_wake_locks():

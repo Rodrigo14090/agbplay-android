@@ -1,6 +1,7 @@
 // Emulator-only end-to-end probe: real MainWindow, service, synthesis and QAudioSink.
 #include "MainWindow.hpp"
 #include "PlaybackEngine.hpp"
+#include "Debug.hpp"
 #include "SyntheticGsf.hpp"
 #include "SettingsWindow.hpp"
 #include "Settings.hpp"
@@ -27,6 +28,8 @@ public:
     static void start(MainWindow &window) {
         const auto directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         QDir().mkpath(directory);
+        if (!Debug::open((directory + "/background-audio.log").toStdString().c_str()))
+            qFatal("Cannot create native audio diagnostics log");
         const auto file = (directory + "/background-fixture.gba").toStdString();
         auto rom = Fixture::ScannableRom(false);
         rom[0x50a] = 0xb2; // positive-time musical loop, not a busy GOTO
