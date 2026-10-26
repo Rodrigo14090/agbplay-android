@@ -7,6 +7,15 @@ FIFO ni salida de audio.
 
 ## Comportamiento actual: 1.1.3
 
+[APK ARM64 1.1.3 firmado (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40369365267/artifacts/12671572944).
+
+- Fuente exacta: `b6dfa9126bd1321622606130816688756c43b23f`.
+- Rama: `android/audio-compatibility`, [PR #2](https://github.com/Rodrigo14090/agbplay-android/pull/2).
+- Versión `1.1.3-audio-compat-dev`, versionCode **14**.
+- SHA-256 APK: `5dbf637726ec832704f47923f097e9710ffa7a1bd4c723561e38f09b35b8405f`.
+- Firma de desarrollo v2 y 17 bibliotecas AArch64 con alineación de 16 KiB
+  verificadas en CI; Qt 6.11.2 y NDK 27.2.12479018.
+
 A petición del usuario, se restaura el desplazamiento por filas (`ScrollPerItem`)
 y los parámetros originales de `QScroller::TouchGesture`: umbral, velocidad,
 desaceleración, aceleración de flicks e inercia predeterminados de Qt. Se retiran
@@ -32,6 +41,18 @@ verifican la mitad del recorrido con tolerancia de media fila, los parámetros
 originales de QScroller y ambos extremos tras cambiar de posición. Se conservan
 las pruebas de rueda, selección, casillas y reordenamiento, así como las
 repeticiones con escalas DPI 1×, 2× y 3×.
+
+Verificado en Linux local (Qt 6.8.2): compilación y **8/8 CTest**, con las
+comprobaciones adicionales a escalas 2× y 3×. El mismo gesto en ambas listas
+produce **1008/528 px** de contenido (original/nuevo), con filas de 48 px.
+El [CI del PR](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40369373990)
+aprobó motor normal/sanitizado, GUI/DPI con Qt 6.4.2, SAF y APK; la comparación
+también dio 1008/528 px. Clang del NDK aprobó la comprobación de sintaxis ARM64.
+La validación táctil en teléfono/tablet reales sigue pendiente.
+Al preparar este registro seguía en curso el recorrido largo de ciclo de vida
+del emulador en el workflow de push, junto a la instalación de dependencias del
+trabajo Linux normal duplicado. El equivalente Linux normal del PR ya aprobó;
+no se declara finalizado todo el workflow de push.
 
 ## Registro anterior: APK 1.1.2 (sustituido)
 

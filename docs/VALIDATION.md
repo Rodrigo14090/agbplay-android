@@ -1,6 +1,18 @@
 # Validación de la entrega
 
-## Desplazamiento táctil por píxeles (1.1.2 experimental)
+## Scroll original con recorrido táctil al 50 % (1.1.3 experimental)
+
+[APK ARM64 1.1.3 con firma de desarrollo v2 (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40369365267/artifacts/12671572944).
+Fuente exacta: `b6dfa9126bd1321622606130816688756c43b23f`, rama
+`android/audio-compatibility`, versionCode 14. Se restaura ScrollPerItem y la
+inercia predeterminada de Qt; sólo los eventos de scroll táctil vertical se
+convierten a la mitad. 504 px es el objetivo relativo frente a 1008 px: con filas
+completas de 48 px, el ensayo produce 528 px por redondeo. Rueda, selección,
+casillas, reordenamiento y extremos verificados. Linux 8/8 y escalas 2×/3×
+aprobados, al igual que el CI del PR y el APK firmado ARM64/16 KiB. No se modifica
+el audio. [SHA-256, resultados y validación física pendiente](TOUCH-SCROLL.md).
+
+## Desplazamiento táctil por píxeles (1.1.2 experimental, histórico)
 
 [APK ARM64 1.1.2 con firma de desarrollo v2 (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40360711708/artifacts/12668660749).
 Fuente exacta: `eecca14c3c9015dc36f2648acf1323fa512591db`, rama
