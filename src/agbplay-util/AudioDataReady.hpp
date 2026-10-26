@@ -13,7 +13,12 @@ public:
         while (event.try_acquire()) {} // retire a notification racing a previous timeout/cancel
         waiting.exchange(true, std::memory_order_acq_rel);
     }
-    void Disarm() noexcept { waiting.store(false, std::memory_order_release); }
+    void Disarm() noexcept {
+        // All transitions are acquire/release RMWs. If a publication races
+        // disarming, its visibility must carry through to the next Arm/read;
+        // a plain store here would break that chain on weakly ordered CPUs.
+        waiting.exchange(false, std::memory_order_acq_rel);
+    }
     void Signal() noexcept {
         // No syscall or lock on the synthesis worker unless a push consumer
         // actually armed a wait. Qt/PortAudio never arm this event.
