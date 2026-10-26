@@ -87,10 +87,10 @@ def main():
         assert "PlaybackService" in services and "isForeground=true" in services, services
         adb("shell", "input", "keyevent", "KEYCODE_HOME")
         wait_for(lambda s: s["applicationState"] != 4)
-        continuous("home")
+        continuous("home", 30 if MODE == "audiotrack" else 12)
         assert state()["uiTaskRuns"] == 0, state()
         adb("shell", "input", "keyevent", "KEYCODE_SLEEP")
-        continuous("screen-off")
+        continuous("screen-off", 60 if MODE == "audiotrack" else 12)
         power = adb("shell", "dumpsys", "power").decode()
         assert "mWakefulness=Asleep" in power or "mWakefulness=Dozing" in power, power
         media("pause")
