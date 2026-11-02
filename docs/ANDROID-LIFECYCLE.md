@@ -7,6 +7,22 @@ Trabajo en `android/audio-compatibility`, sin modificar `android/arm64-native`
 ni `main`. Se conserva el scroll por filas al 50 %, el sintetizador, los
 remuestreadores y ambos backends de audio con su reserva PCM existente.
 
+## APK 1.1.4
+
+[APK ARM64 firmado, comprimido en ZIP](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41396012114/artifacts/13119347787).
+
+- Fuente exacta: `d9f4475e0f17e3ec097f1c0c7559ba0270586239`.
+- Versión `1.1.4-audio-compat-dev`, versionCode **15**, mínimo API 28/target 35.
+- SHA-256 APK: `b94921540776e6b2ac41f28b66ffa915f2185cb7bddf3912f85c21115bd32d87`.
+- Qt 6.11.2, NDK 27.2.12479018, 17 bibliotecas AArch64 con LOAD a 16 KiB.
+- Firma de desarrollo v2 y hash verificados tanto en CI como sobre el APK
+  descargado. Se comprobó que el DEX de producción no contiene LifecycleProbe.
+
+Los resultados corresponden al commit del APK, no a la fecha de los documentos.
+La comprobación posterior del backend real antes de medir se añadió en
+`d6ade0d652ebbb938e5089a86be3fc180057610a`: sólo cambió seis líneas del script
+de pruebas. El código de producción del APK anterior se conserva idéntico.
+
 El usuario reportó un cierre persistente al abrir menús/SAF después de escuchar,
 pausar y volver de pantalla apagada. También reportó audio que continúa al quitar
 la tarea y una ventana gris al relanzar. No se dispone de su stack trace ni de
@@ -88,6 +104,20 @@ ocultan/muestran ventanas ni se recrea el sintetizador para refrescar la pantall
 
 ## Pruebas
 
+- Los seis trabajos del [workflow del APK](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41396012114)
+  terminaron correctamente: motor normal/sanitizado, GUI/DPI, 14 pruebas de
+  instrumentación Android, APK ARM64 y recorridos nativos de interfaz/audio.
+  Linux local aprobó **8/8 CTest**. Los [registros y capturas del emulador](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41396012114/artifacts/13119572499)
+  incluyen dos eliminaciones de tarea con EXIT_SELF/0, sin fatal en el crash
+  buffer, y aperturas reales de Preferencias/SAF después de ambos relanzamientos.
+- La [repetición con backend verificado explícitamente](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41397708645)
+  sobre `d6ade0d652ebbb938e5089a86be3fc180057610a` también aprobó los seis trabajos.
+  Sus [capturas/JSON e historial de salida](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41397708645/artifacts/13120024391)
+  confirman AudioTrack antes de apagar la pantalla y en ambos relanzamientos;
+  crash buffer vacío, EXIT_SELF/0 en ambas retiradas y cero underruns FIFO
+  durante ese recorrido de ciclo de vida. El recorrido independiente de Qt
+  registró underruns en el emulador: aprobar estas pruebas no certifica cero
+  pérdidas en todos los backends/dispositivos. No se ajustó el buffering.
 - Linux: flags de ventanas y diálogos, tareas diferidas ante Active/Hidden
   rápidos, eliminación de un perfil pendiente sin preguntas, idempotencia y
   fallo al guardar configuración. Se mantienen todas las suites anteriores.
@@ -113,6 +143,21 @@ python3 scripts/test-android-lifecycle.py --screen-off-seconds 600 --real-expiry
 Eso no simula todas las políticas de suspensión de Huawei. Las pruebas con
 pantalla apagada durante horas y la recuperación del cierre original requieren
 repetir el escenario en la tablet física.
+
+## Comprobación en la MatePad
+
+1. Seleccionar AudioTrack en Preferencias y reproducir el mismo juego/GSF usado
+   al detectar el fallo. Apagar la pantalla durante el período habitual, pausar
+   desde la notificación, encenderla y abrir Preferencias y ROM/GSF varias veces.
+2. Repetir dejando pasar más de cinco minutos después de pausar: la sesión
+   pausada puede expirar, pero la app debe seguir utilizable al volver.
+3. Quitar la app de recientes mientras reproduce y volver a abrirla. La música
+   debe detenerse al quitarla y el nuevo arranque debe mostrar la interfaz sin
+   requerir minimizar/restaurar. Repetir estando pausada, con la notificación
+   ya retirada. Inicio/pantalla apagada deben seguir conservando la reproducción.
+4. Si se reproduce un crash o una ventana congelada, capturar los registros
+   siguientes antes de borrar datos o reinstalar. Anotar duración aproximada,
+   lugar desde donde se pausó y primera acción que provocó el fallo.
 
 ## Capturar el fallo sin reinstalar primero
 

@@ -1,5 +1,32 @@
 # Validación de la entrega
 
+## Cierre de tareas y reanudación Android (1.1.4 experimental)
+
+[APK ARM64 1.1.4 con firma de desarrollo v2 (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41396012114/artifacts/13119347787).
+Fuente exacta: `d9f4475e0f17e3ec097f1c0c7559ba0270586239`, rama
+`android/audio-compatibility`, versionCode 15.
+SHA-256: `b94921540776e6b2ac41f28b66ffa915f2185cb7bddf3912f85c21115bd32d87`.
+Firma, ABI, 17 bibliotecas/16 KiB y ausencia del helper de pruebas comprobadas
+en CI y sobre el APK descargado. [Análisis del ciclo de vida, pruebas y captura
+del crash en Huawei](ANDROID-LIFECYCLE.md). Se conservan intactos síntesis,
+remuestreadores, backends, reserva PCM y el desplazamiento por filas al 50 %.
+
+Los [seis trabajos del CI del APK](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41396012114)
+aprobaron, además de **8/8 CTest** locales. Incluyen 14 pruebas de instrumentación,
+motor normal/sanitizado, GUI/DPI y recorridos de Qt/AudioTrack, GSF, pistas,
+pantalla apagada, pausa/expiración del servicio, callbacks retirados, menús y
+SAF reales. Ambas eliminaciones de tarea con perfil pendiente terminaron con
+EXIT_SELF/0 y sin fatal; los dos relanzamientos quedaron utilizables.
+La [repetición final](https://github.com/Rodrigo14090/agbplay-android/actions/runs/41397708645)
+sobre `d6ade0d652ebbb938e5089a86be3fc180057610a` aprobó también los seis trabajos
+y exige AudioTrack real desde el primer tramo de ciclo de vida. Este último
+commit sólo añade seis líneas de prueba; no cambia el código de producción del
+APK enlazado. La pantalla apagada se midió durante 30 s en el recorrido nuevo
+y 60 s en el recorrido de audio existente; la expiración de cinco minutos se
+aceleró con el Runnable real del servicio. No son pruebas de escucha de horas.
+La comprobación de varias horas y del cierre persistente reportado sigue
+pendiente en la Huawei física: no se dispone de su traza ni del dispositivo.
+
 ## Scroll original con recorrido táctil al 50 % (1.1.3 experimental)
 
 [APK ARM64 1.1.3 con firma de desarrollo v2 (ZIP)](https://github.com/Rodrigo14090/agbplay-android/actions/runs/40369365267/artifacts/12671572944).
