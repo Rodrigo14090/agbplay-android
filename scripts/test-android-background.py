@@ -69,7 +69,10 @@ def startup_ready():
     # exiting process as if it described the new Activity. Once measuring,
     # continuous() still fails on every process restart.
     def ready(s):
-        running = adb("shell", "pidof", PACKAGE).decode().split()
+        try:
+            running = adb("shell", "pidof", PACKAGE).decode().split()
+        except subprocess.CalledProcessError:
+            return False
         return (str(int(s["pid"])) in running and s["sequence"] >= 6
                 and s["applicationState"] == 4 and s["updatesEnabled"]
                 and s["exposed"] and s["inputFocus"] and s["playing"] and s["rms"] > 0.00001)
