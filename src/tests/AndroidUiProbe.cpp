@@ -1,6 +1,7 @@
 // Emulator-only entry point. Uses the real MainWindow and Android input path;
 // no ROM, synthesis or audio device is needed for this UI regression.
 #include "MainWindow.hpp"
+#include "TouchDialogFilter.hpp"
 #include <QApplication>
 #include <QDir>
 #include <QJsonDocument>
@@ -21,6 +22,8 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("agbplay");
     QCoreApplication::setApplicationName("agbplay-ui-probe");
+    TouchDialogFilter touchDialogs;
+    app.installEventFilter(&touchDialogs);
     MainWindow window(nullptr, true);
     QObject::disconnect(&window, &MainWindow::OpenRomRequested, nullptr, nullptr);
     QObject::disconnect(&window, &MainWindow::OpenGsfFolderRequested, nullptr, nullptr);

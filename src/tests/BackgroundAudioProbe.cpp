@@ -5,6 +5,7 @@
 #include "SyntheticGsf.hpp"
 #include "SettingsWindow.hpp"
 #include "Settings.hpp"
+#include "TouchDialogFilter.hpp"
 #include "Profile.hpp"
 #include "Gsf.hpp"
 #include <QComboBox>
@@ -157,6 +158,9 @@ public:
                 result["menu"] = describe(window.findChild<QWidget *>("touchMenuButton"));
                 const auto *modal = QApplication::activeModalWidget();
                 result["dialog"] = modal && modal->isVisible() ? modal->windowTitle() : QString{};
+                result["dialogObject"] = modal ? modal->objectName() : QString{};
+                result["dialogExposed"] = modal && modal->windowHandle() && modal->windowHandle()->isExposed();
+                result["dialogFocus"] = modal && qApp->focusWindow() == modal->windowHandle();
                 if (modal) {
                     auto *buttons = modal->findChild<QDialogButtonBox *>();
                     if (buttons && buttons->button(QDialogButtonBox::Cancel))
@@ -185,6 +189,8 @@ int main(int argc, char **argv) {
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("agbplay");
     QCoreApplication::setApplicationName("agbplay-background-probe");
+    TouchDialogFilter touchDialogs;
+    app.installEventFilter(&touchDialogs);
     MainWindow window;
     window.show();
     QTimer::singleShot(1000, &window, [&] { BackgroundAudioProbe::start(window); });

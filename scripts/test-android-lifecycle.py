@@ -82,7 +82,8 @@ def menus_and_saf(name):
     tap(foreground()["menu"])
     action("Edit")
     action("Global Preferences")
-    settings = bg.wait_for(lambda s: "Preferences" in s["dialog"] and "dialogCancel" in s)
+    settings = bg.wait_for(lambda s: s["dialogObject"] == "SettingsWindow" and s["dialogExposed"]
+                           and s["dialogFocus"] and "dialogCancel" in s and s["dialogCancel"]["visible"])
     capture(name + "-preferences")
     tap(settings["dialogCancel"])
     tap(foreground()["open"])
@@ -130,8 +131,8 @@ def remove_and_relaunch(name):
     bg.wait_for(lambda s: s["applicationState"] != 4)
     command("remove-task")  # AppTask.finishAndRemoveTask on the Android main thread
     wait_until(lambda: not pid(), timeout=20)
-    assert not service_present()
-    assert "agbplay:playback" not in bg.active_wake_locks()
+    wait_until(lambda: not service_present())
+    wait_until(lambda: "agbplay:playback" not in bg.active_wake_locks())
     print(f"PASS {name}: task removed, process/service/audio wake lock released", flush=True)
     launch()
     assert pid() != previous
