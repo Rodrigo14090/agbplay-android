@@ -65,11 +65,21 @@ Se liberan foco/wake lock/notificación y se encola una petición JNI de cierre,
 independiente de las generaciones de comandos de transporte.
 
 En el hilo Qt, esa petición detiene el transporte, cancela importaciones y
-diálogos diferidos, guarda ajustes si es posible y llama a QCoreApplication::exit,
-sin recorrer la pregunta interactiva de closeEvent. Los destructores normales
+diálogos diferidos, guarda ajustes si es posible y pide el cierre normal de Qt.
+closeEvent acepta el cierre cuando ya se está terminando, sin preguntas, también
+si llega después otro Quit de QtActivity. Los destructores normales
 liberan el motor y esperan los workers. No se fuerza una señal ni killProcess
 como mecanismo de cierre. Los perfiles pendientes no se sobrescriben
 automáticamente al eliminar la tarea; el guardado explícito normal se conserva.
+
+Se configura `QT_ANDROID_NO_EXIT_CALL=1`, opción leída en
+`androidjnimain.cpp::startQtNativeApplication` de Qt 6.11.2: la Activity de Qt
+conserva la responsabilidad de salir del proceso después de finalizar Qt. Se
+evita que el `exit(ret)` nativo y el `System.exit(0)` de QtActivity compitan.
+El recorrido inicial de CI detectó `FORTIFY: pthread_mutex_lock called on a
+destroyed mutex`/SIGABRT en hwuiTask0 durante esa terminación. La prueba exige
+ausencia de fatal Java/nativo y salida registrada EXIT_SELF/0, no sólo que el
+PID desaparezca. No se desactiva la aceleración gráfica ni se altera el audio.
 
 El repintado vuelve a depender de Qt/exposición de superficie. El visualizador
 sigue sin actualizarse en segundo plano y el control mantiene sus intervalos
@@ -93,7 +103,8 @@ ocultan/muestran ventanas ni se recrea el sintetizador para refrescar la pantall
 - El workflow conserva los recorridos de ambos modos de audio, foco, GSF y
   controles de pistas, además de los escenarios de interfaz teléfono/tablet.
 
-Para esperar el plazo de pausa real y ampliar la escucha, sobre el APK del probe:
+Para esperar el plazo de pausa real y ampliar la escucha en el emulador API 35,
+sobre el APK x86_64 del probe:
 
 ```bash
 python3 scripts/test-android-lifecycle.py --screen-off-seconds 600 --real-expiry

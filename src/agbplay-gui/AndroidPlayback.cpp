@@ -25,6 +25,10 @@ void NativeShutdown(JNIEnv *, jclass) {
 QJniObject context() { return QNativeInterface::QAndroidApplication::context(); }
 }
 AndroidPlayback::AndroidPlayback(QObject *parent) : QObject(parent) {
+    // Qt 6.11.2 otherwise calls libc exit() after main() returns while its
+    // Activity also calls System.exit(). Let the Activity own process exit,
+    // after normal Qt/window/worker teardown; avoid racing HWUI destructors.
+    qputenv("QT_ANDROID_NO_EXIT_CALL", "1");
     QJniEnvironment env;
     const auto clazz = env.findClass(service);
     JNINativeMethod methods[]{

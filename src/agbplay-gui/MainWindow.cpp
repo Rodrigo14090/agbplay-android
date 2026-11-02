@@ -83,10 +83,9 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     connect(androidPlayback.get(), &AndroidPlayback::command, this, &MainWindow::AndroidPlaybackCommand);
     connect(androidPlayback.get(), &AndroidPlayback::shutdownRequested, this, [this] {
         PrepareForShutdown();
-        // The task/Activity is already going away. QApplication::quit() would
-        // run closeEvent(), which can wait for an invisible Save/Cancel dialog.
-        // Exit on the Qt thread instead; normal C++ destruction joins workers.
-        QCoreApplication::exit(0);
+        // Close windows through Qt's normal path. The shutdown flag makes late
+        // closeEvent calls noninteractive, including QtActivity's own Quit.
+        QCoreApplication::quit();
     });
     connect(androidPlayback.get(), &AndroidPlayback::error, this, [this](const QString &message) {
         AndroidPlaybackCommand(AndroidPlayback::Stop);
