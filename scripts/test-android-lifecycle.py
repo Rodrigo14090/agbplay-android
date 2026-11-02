@@ -106,6 +106,12 @@ def launch():
     adb("shell", "run-as", PACKAGE, "rm", "-f", "files/background-probe.json")
     adb("shell", "am", "start", "-W", "-n", ACTIVITY, "--es", "outputMode", "audiotrack")
     bg.startup_ready()
+    # Qt's initial configuration restart can replace the launch Intent and
+    # drop outputMode. Select through the real preferences path if needed and
+    # require the actual backend, rather than labelling Qt playback AudioTrack.
+    if bg.state()["backend"] != "audiotrack":
+        command("audiotrack")
+    bg.wait_for(lambda s: s["backend"] == "audiotrack" and s["playing"] and s["rms"] > 0.00001)
     foreground()
     bg.continuous("lifecycle-foreground", 4)
 
