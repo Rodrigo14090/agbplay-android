@@ -8,6 +8,7 @@ or reflection helper is packaged in the production APK.
 import argparse
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -134,6 +135,21 @@ def remove_and_relaunch(name):
     wait_until(lambda: not pid(), timeout=20)
     wait_until(lambda: not service_present())
     wait_until(lambda: "agbplay:playback" not in bg.active_wake_locks())
+    removal_log = adb("logcat", "-d", "--pid", previous, "-v", "threadtime",
+                      "agbplay.lifecycle:V", "AndroidRuntime:E", "libc:E", "*:S").decode(errors="replace")
+    (OUT / f"{name}-removal.log").write_text(removal_log)
+    assert "shutdown: " in removal_log, removal_log
+    assert "FATAL EXCEPTION" not in removal_log and "Fatal signal" not in removal_log, removal_log
+    if int(adb("shell", "getprop", "ro.build.version.sdk").decode()) >= 30:
+        def clean_exit():
+            history = adb("shell", "dumpsys", "activity", "exit-info", PACKAGE).decode(errors="replace")
+            (OUT / f"{name}-exit-info.txt").write_text(history)
+            entry = re.search(rf"\bpid={re.escape(previous)}\b(.*?)(?=\bApplicationExitInfo\b|\Z)", history, re.S)
+            if not entry:
+                return False  # allow ActivityManager to publish the exit record
+            assert re.search(r"\breason=1\b", entry[0]) and re.search(r"\bstatus=0\b", entry[0]), history
+            return True
+        wait_until(clean_exit)
     print(f"PASS {name}: task removed, process/service/audio wake lock released", flush=True)
     launch()
     assert pid() != previous
@@ -172,6 +188,9 @@ def main():
     finally:
         (OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))
         (OUT / "crash.txt").write_bytes(adb("logcat", "-d", "-b", "crash"))
+        (OUT / "windows.txt").write_bytes(adb("shell", "dumpsys", "window"))
+        (OUT / "activities.txt").write_bytes(adb("shell", "dumpsys", "activity", "activities"))
+        capture("final-state")
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "wm", "size", "reset")
         adb("shell", "wm", "density", "reset")
