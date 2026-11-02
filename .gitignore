@@ -38,3 +38,8 @@ asan.log*
 *.aab
 *.keystore
 *.jks
+
+# Local Android audio-route diagnostic snapshots
+/audio-reports/
+/lifecycle-reports/
+__pycache__/

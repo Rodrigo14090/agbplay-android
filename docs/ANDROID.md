@@ -3,6 +3,16 @@
 Aplicación nativa C++ con Qt Widgets. No utiliza Termux ni emulador como runtime.
 Requiere Android 9/API 28 o posterior y ABI `arm64-v8a`.
 
+## Experimento de compatibilidad multimedia
+
+La rama `android/audio-compatibility` añade un selector en Opciones globales >
+Playback: Automático / Qt (predeterminado) o Compatibilidad multimedia /
+AudioTrack. Utiliza el mismo motor y la misma reserva PCM; la rama estable
+`android/arm64-native` permanece sin modificaciones. No se garantiza activar un
+DSP de fabricante. Incluye WAV de comparación, telemetría y capturas ADB:
+[procedimiento y límites](AUDIO-COMPATIBILITY.md). El procedimiento de construcción
+inferior es el mismo; selecciona el commit del APK indicado en VALIDATION.md.
+
 ## Construcción
 
 Instalar CMake >=3.22, Ninja, Git, JDK 21, Android SDK y NDK 27.2.12479018.

@@ -4,7 +4,46 @@
 #include <QMenu>
 #include <QToolButton>
 #include <QScroller>
+#include <QScrollEvent>
+#include <QScrollPrepareEvent>
 #include <QInputDialog>
+
+void SonglistView::EnableTouchScrolling()
+{
+    halfSpeedTouchScrolling = true;
+    setVerticalScrollMode(QAbstractItemView::ScrollPerItem);
+    setHorizontalScrollMode(QAbstractItemView::ScrollPerItem);
+    QScroller::grabGesture(viewport(), QScroller::TouchGesture);
+}
+
+bool SonglistView::viewportEvent(QEvent *event)
+{
+    if (halfSpeedTouchScrolling && event->type() == QEvent::ScrollPrepare) {
+        const bool handled = QListWidget::viewportEvent(event);
+        auto *prepare = static_cast<QScrollPrepareEvent *>(event);
+        if (prepare->isAccepted()) {
+            // QScroller retains its original gesture/inertia settings. Expose
+            // twice the vertical range and position, then consume at half speed
+            // below. Absolute positions stay consistent across gestures and
+            // after wheel/selection changes; the bottom remains reachable.
+            auto range = prepare->contentPosRange();
+            prepare->setContentPosRange(QRectF(range.x(), range.y() * 2, range.width(), range.height() * 2));
+            auto position = prepare->contentPos();
+            prepare->setContentPos(QPointF(position.x(), position.y() * 2));
+        }
+        return handled;
+    }
+    if (halfSpeedTouchScrolling && event->type() == QEvent::Scroll) {
+        const auto *scroll = static_cast<QScrollEvent *>(event);
+        const auto position = scroll->contentPos();
+        QScrollEvent slower(QPointF(position.x(), position.y() * 0.5),
+                            scroll->overshootDistance(), scroll->scrollState());
+        const bool handled = QListWidget::viewportEvent(&slower);
+        event->setAccepted(slower.isAccepted());
+        return handled;
+    }
+    return QListWidget::viewportEvent(event);
+}
 
 SonglistWidget::SonglistWidget(const QString &titleString, bool editable, QWidget *parent) :
     QWidget(parent), editable(editable), playIcon(":/icons/playlist-play.ico"), stopIcon(":/icons/playlist-stop.ico")
@@ -86,7 +125,7 @@ void SonglistWidget::EnableTouchInterface()
     selectAllCheckBox.setFixedSize(48, 48);
     selectAllCheckBox.setAccessibleName(selectAllCheckBox.toolTip());
     listWidget.setStyleSheet("QListWidget::item { min-height: 48px; } QListWidget::indicator { width: 28px; height: 28px; }");
-    QScroller::grabGesture(listWidget.viewport(), QScroller::TouchGesture);
+    listWidget.EnableTouchScrolling();
     auto *more = new QToolButton(this);
     more->setText("⋮");
     more->setAccessibleName("Acciones de la lista");

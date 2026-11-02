@@ -98,6 +98,17 @@ private:
         return count;
     }
 public:
+    // Push-output read: return only real frames. A short read is backpressure,
+    // not a missing output frame; the native device may still hold queued PCM.
+    size_t TakeAvailable(std::span<float> interleaved) noexcept
+    {
+        ApplyDiscard();
+        const auto queued = Readable();
+        const auto count = std::min(interleaved.size() / 2, queued);
+        UpdateMaximum(maxQueuedObserved, queued);
+        UpdateMinimum(minQueuedObserved, queued);
+        return ReadFrames(interleaved.first(count * 2));
+    }
     size_t Take(std::span<float> interleaved) noexcept
     {
         ApplyDiscard();

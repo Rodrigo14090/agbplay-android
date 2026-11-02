@@ -8,6 +8,9 @@ import zipfile
 
 apk = pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(apk) as archive:
+    for name in archive.namelist():
+        if name.endswith('.dex'):
+            assert b'Lorg/agbplay/android/LifecycleProbe;' not in archive.read(name), 'Test lifecycle controls packaged in production APK'
     libraries = [name for name in archive.namelist() if name.startswith('lib/') and name.endswith('.so')]
     assert libraries, 'APK has no native libraries'
     for name in libraries:

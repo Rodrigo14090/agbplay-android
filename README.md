@@ -7,6 +7,7 @@ Qt Multimedia/AAudio y PortAudio en escritorio.
 - [Construcción, uso y pruebas Android](docs/ANDROID.md)
 - [Procedencia, arquitectura e investigación #85/#96](docs/UPSTREAM.md)
 - [Estado de verificación](docs/VALIDATION.md)
+- [Experimento de salida multimedia y comparación WAV en MatePad](docs/AUDIO-COMPATIBILITY.md)
 
 Esta rama contiene una adaptación en desarrollo. Las funciones implementadas,
 las compilaciones verificadas y las pruebas físicas pendientes se documentan

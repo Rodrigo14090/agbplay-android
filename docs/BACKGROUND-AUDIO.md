@@ -20,8 +20,9 @@ con un sondeo de foco de 100 ms que dependía de ese dispatcher.
 
 Ahora la Activity declara `android.app.background_running=true`. El plano de
 control Qt permanece activo para recibir los comandos de la sesión y avanzar
-la playlist; las actualizaciones de la ventana se deshabilitan fuera de primer
-plano y el temporizador de estado pasa de 16 a 250 ms. El visualizador no se
+la playlist; Qt gestiona las superficies y el temporizador de estado pasa de
+16 a 250 ms. Desde 1.1.4 no se cambian globalmente los flags de repintado de
+ventanas y diálogos al perder foco. El visualizador no se
 actualiza cuando la aplicación está oculta.
 Los diálogos y resultados de importación esperan a que vuelva a primer plano;
 no se crean ventanas sobre una superficie suspendida. El historial visible del
@@ -61,11 +62,14 @@ nuevo antes de reanudar sin reproducir la cola de la canción detenida. La reser
 normal de 30 ms no cambia; las pruebas comprueban el descarte concurrente y la
 integridad estéreo, además de la paridad PCM existente.
 
-El servicio es START_NOT_STICKY y stopWithTask: no intenta reconstruir un motor
-C++ inexistente tras la muerte del proceso. Salir/cerrar la aplicación o quitar
+El servicio es START_NOT_STICKY: no intenta reconstruir un motor
+C++ inexistente tras la muerte del proceso. Desde 1.1.4 declara stopWithTask=false
+para recibir onTaskRemoved, y una Activity de Qt derivada coordina la terminación
+nativa sin preguntas ocultas por perfiles pendientes. Salir/cerrar la aplicación o quitar
 su tarea de recientes detiene la música; minimizar con Inicio o apagar la
 pantalla la conserva. Un cierre forzado por Android o por el fabricante sigue
 pudiendo interrumpirla. No se promete supervivencia a un proceso terminado.
+[Diagnóstico, cambios de ciclo de vida y pruebas de menús/SAF](ANDROID-LIFECYCLE.md).
 
 ## Pruebas y alcance
 

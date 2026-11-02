@@ -4,6 +4,7 @@
 #include "SonglistWidget.hpp"
 #include "StatusWidget.hpp"
 #include "VolumeSlider.hpp"
+#include "AudioOutputMode.hpp"
 #include "VUMeterWidget.hpp"
 
 #include <atomic>
@@ -81,9 +82,12 @@ private:
     void ApplyGsfPlaylist(const std::vector<Gsf::Song> &songs, bool replaceWithoutPrompt);
     void RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task);
     void RunWhenActive(std::function<void()> task);
-#ifdef Q_OS_ANDROID
+    void HandleApplicationState(Qt::ApplicationState state);
+    void PrepareForShutdown();
+    void SaveSettingsWithoutDialog();
     std::vector<std::function<void()>> deferredUiTasks;
-#endif
+    bool applicationActive = true;
+    bool shuttingDown = false;
     void OpenDocuments(const std::vector<std::filesystem::path> &paths,
                        const std::vector<Gsf::Song> *automaticPlaylist = nullptr);
     void LoadGsfFolder();
@@ -92,6 +96,8 @@ private:
     bool AskGameCodeAndUpdateProfile();
 
     void LoadGame();
+    void LoadDiagnosticWav();
+    void ApplyAudioPreferences(AudioOutputMode previousMode);
     bool CloseGame();
     void ExportAudio(bool benchmarkOnly, bool separateTracks, bool quick);
     void ExportStillInProgress();

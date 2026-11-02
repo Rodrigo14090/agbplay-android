@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include "AudioOutputMode.hpp"
 
 struct Settings
 {
@@ -14,6 +15,7 @@ struct Settings
     int8_t playbackMaxLoops = 0;
     bool playbackLoopIndefinitely = false;
     uint32_t playbackVolume = 100;
+    AudioOutputMode androidAudioOutputMode = AudioOutputMode::Automatic;
 
     uint32_t exportSampleRate = 0;
     uint32_t exportBitDepth = 0;

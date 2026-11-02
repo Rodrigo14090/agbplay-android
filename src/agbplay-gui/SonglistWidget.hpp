@@ -12,6 +12,19 @@
 #include <QWidget>
 #include <vector>
 
+class SonglistView final : public QListWidget
+{
+public:
+    using QListWidget::QListWidget;
+    void EnableTouchScrolling();
+
+protected:
+    bool viewportEvent(QEvent *event) override;
+
+private:
+    bool halfSpeedTouchScrolling = false;
+};
+
 class SonglistWidget : public QWidget
 {
     Q_OBJECT
@@ -44,7 +57,7 @@ signals:
 public:
     QVBoxLayout layout{this};
     QHBoxLayout titleBarLayout;
-    QListWidget listWidget{this};
+    SonglistView listWidget{this};
     QLabel title{this};
     QCheckBox selectAllCheckBox{this};
     QPushButton addRemoveButton{this};
