@@ -120,9 +120,9 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
+            python3 scripts/test-android-lifecycle.py
             python3 scripts/test-android-background.py qt
             python3 scripts/test-android-background.py audiotrack
-            python3 scripts/test-android-lifecycle.py
             python3 scripts/test-android-ui.py
       - uses: actions/upload-artifact@v4
         if: always()
