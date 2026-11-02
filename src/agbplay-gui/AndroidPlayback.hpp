@@ -15,6 +15,7 @@ public:
     void dispatch(int value, qint64 generation);
 signals:
     void command(int value);
+    void shutdownRequested();
     void error(const QString &message);
 private:
     bool checkException();

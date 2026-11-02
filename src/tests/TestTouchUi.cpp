@@ -5,6 +5,7 @@
 #include "DocumentAccess.hpp"
 #include "Settings.hpp"
 #include "SettingsWindow.hpp"
+#include "Profile.hpp"
 #include "OS.hpp"
 #include <nlohmann/json.hpp>
 
@@ -25,6 +26,7 @@
 #include <QScrollEvent>
 #include <QScrollPrepareEvent>
 #include <QWheelEvent>
+#include <QScopeGuard>
 #include <fstream>
 
 class TestTouchUi : public QObject
@@ -77,6 +79,87 @@ private slots:
         QTest::addColumn<bool>("editable");
         QTest::newRow("songs") << false;
         QTest::newRow("playlist") << true;
+    }
+    void backgroundDoesNotLockWindowsOrDialogs()
+    {
+        MainWindow window(nullptr, true);
+        QWidget unrelated;
+        QDialog intentionallyLocked(&window);
+        window.show();
+        settle();
+        intentionallyLocked.setUpdatesEnabled(false);
+        int completed = 0;
+        window.HandleApplicationState(Qt::ApplicationHidden);
+        window.RunWhenActive([&] { ++completed; });
+        settle();
+        QCOMPARE(completed, 0);
+        QVERIFY(window.updatesEnabled());
+        QVERIFY(unrelated.updatesEnabled());
+        QVERIFY(!intentionallyLocked.updatesEnabled());
+        // A quick Active -> Hidden sequence must not drain deferred dialogs.
+        window.HandleApplicationState(Qt::ApplicationActive);
+        window.HandleApplicationState(Qt::ApplicationHidden);
+        settle();
+        QCOMPARE(completed, 0);
+        window.HandleApplicationState(Qt::ApplicationActive);
+        QTRY_COMPARE(completed, 1);
+        QVERIFY(window.updatesEnabled());
+        QVERIFY(unrelated.updatesEnabled());
+        QVERIFY(!intentionallyLocked.updatesEnabled());
+    }
+    void taskShutdownDoesNotAskToSaveAHiddenProfile()
+    {
+        MainWindow window(nullptr, true);
+        window.profile = std::make_shared<Profile>();
+        window.profile->dirty = true;
+        window.HandleApplicationState(Qt::ApplicationSuspended);
+        int deferred = 0, dialogs = 0;
+        window.RunWhenActive([&] { ++deferred; });
+        QTimer dismiss;
+        connect(&dismiss, &QTimer::timeout, &window, [&] {
+            for (auto *widget : QApplication::topLevelWidgets())
+                if (auto *box = qobject_cast<QMessageBox *>(widget); box && box->isVisible()) {
+                    ++dialogs;
+                    box->done(QMessageBox::Cancel);
+                }
+        });
+        dismiss.start(5);
+        window.PrepareForShutdown();
+        window.PrepareForShutdown(); // idempotent during service/Activity teardown
+        window.HandleApplicationState(Qt::ApplicationActive);
+        window.RunWhenActive([&] { ++deferred; });
+        settle();
+        QVERIFY(window.shuttingDown);
+        QVERIFY(!window.playing);
+        QVERIFY(!window.statusUpdateTimer.isActive());
+        QCOMPARE(dialogs, 0);
+        QCOMPARE(deferred, 0);
+        QVERIFY(window.deferredUiTasks.empty());
+    }
+    void backgroundSaveFailureIsReportedWithoutTerminating()
+    {
+        MainWindow window(nullptr, true);
+        const auto folder = OS::GetLocalConfigDirectory() / "agbplay";
+        QTemporaryDir backup;
+        QVERIFY(backup.isValid());
+        const auto saved = std::filesystem::path(backup.path().toStdString()) / "config";
+        const bool existed = std::filesystem::exists(folder);
+        if (existed) std::filesystem::rename(folder, saved);
+        auto restore = qScopeGuard([&] {
+            std::error_code error;
+            std::filesystem::remove(folder, error);
+            if (existed) std::filesystem::rename(saved, folder, error);
+        });
+        // A file blocks create_directories, just like an unavailable/unwritable
+        // config location. Activity state changes must never throw through Qt.
+        std::ofstream(folder) << "synthetic config failure";
+        window.settings->dirty = true;
+        window.HandleApplicationState(Qt::ApplicationHidden);
+        QVERIFY(window.settings->dirty); // retain the opportunity to retry
+        QVERIFY(window.logWidget.toPlainText().contains("Cannot save settings"));
+        window.HandleApplicationState(Qt::ApplicationActive);
+        settle();
+        QVERIFY(window.updatesEnabled());
     }
     void songListTouchScroll()
     {

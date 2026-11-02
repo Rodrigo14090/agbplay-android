@@ -85,7 +85,7 @@ def main():
     try:
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "wm", "dismiss-keyguard")
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity", "--es", "outputMode", MODE)
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.agbplay.android.AgbplayActivity", "--es", "outputMode", MODE)
         continuous("foreground", 4)
         assert state()["backend"] == MODE, state()
         services = adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
@@ -123,7 +123,7 @@ def main():
         paused("media-stop")
         services = adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
         assert "PlaybackService" not in services, services
-        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
+        adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.agbplay.android.AgbplayActivity")
         wait_for(lambda s: s["uiTaskRuns"] == 1 and s["applicationState"] == 4)
         print("PASS deferred UI: control loop runs hidden, UI completion waits for foreground", flush=True)
         time.sleep(1)

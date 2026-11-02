@@ -16,13 +16,22 @@ void NativeCommand(JNIEnv *, jclass, jint value, jlong generation) {
     QMutexLocker lock(&bridgeMutex);
     if (bridge) QMetaObject::invokeMethod(bridge, [target = bridge, value, generation] { target->dispatch(value, generation); }, Qt::QueuedConnection);
 }
+void NativeShutdown(JNIEnv *, jclass) {
+    QMutexLocker lock(&bridgeMutex);
+    // Shutdown belongs to the Activity/task lifetime, not a transport request
+    // generation. A simultaneous Stop must not discard this acknowledgement.
+    if (bridge) QMetaObject::invokeMethod(bridge, [target = bridge] { emit target->shutdownRequested(); }, Qt::QueuedConnection);
+}
 QJniObject context() { return QNativeInterface::QAndroidApplication::context(); }
 }
 AndroidPlayback::AndroidPlayback(QObject *parent) : QObject(parent) {
     QJniEnvironment env;
     const auto clazz = env.findClass(service);
-    JNINativeMethod method{const_cast<char *>("nativeCommand"), const_cast<char *>("(IJ)V"), reinterpret_cast<void *>(NativeCommand)};
-    if (!clazz || env->RegisterNatives(clazz, &method, 1) != JNI_OK) {
+    JNINativeMethod methods[]{
+        {const_cast<char *>("nativeCommand"), const_cast<char *>("(IJ)V"), reinterpret_cast<void *>(NativeCommand)},
+        {const_cast<char *>("nativeShutdown"), const_cast<char *>("()V"), reinterpret_cast<void *>(NativeShutdown)}
+    };
+    if (!clazz || env->RegisterNatives(clazz, methods, 2) != JNI_OK) {
         checkException();
         return;
     }

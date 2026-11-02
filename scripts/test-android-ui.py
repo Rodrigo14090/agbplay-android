@@ -45,7 +45,7 @@ def test(name, width, height, density, font_scale):
     adb("shell", "wm", "density", density)
     adb("shell", "settings", "put", "system", "font_scale", font_scale)
     adb("shell", "run-as", PACKAGE, "rm", "-f", "files/ui-probe.json")
-    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.qtproject.qt.android.bindings.QtActivity")
+    adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.agbplay.android.AgbplayActivity")
     # With background_running=true, a live Qt timer does not imply that Android
     # is delivering input to this Activity. Wait for actual foreground readiness.
     current = wait_for(lambda s: s["windowWidth"] > 100 and s["windowHeight"] > 100

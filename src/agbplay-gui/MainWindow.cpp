@@ -62,18 +62,7 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     if (touchInterface)
         SetupTouchInterface();
 #ifdef Q_OS_ANDROID
-    connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
-        // Keep the Qt control plane alive, but never paint a suspended surface.
-        for (auto *window : QApplication::topLevelWidgets())
-            window->setUpdatesEnabled(state == Qt::ApplicationActive);
-        statusUpdateTimer.setInterval(state == Qt::ApplicationActive ? 16 : 250);
-        if (state == Qt::ApplicationActive) QTimer::singleShot(0, this, [this] {
-            auto tasks = std::exchange(deferredUiTasks, {});
-            for (auto &task : tasks) RunWhenActive(std::move(task));
-        });
-        if (state != Qt::ApplicationActive && settings && settings->dirty)
-            settings->Save();
-    });
+    connect(qApp, &QGuiApplication::applicationStateChanged, this, &MainWindow::HandleApplicationState);
 #endif
 
     pm = std::make_unique<ProfileManager>();
@@ -92,6 +81,13 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     logWidget.document()->setMaximumBlockCount(2000);
     androidPlayback = std::make_unique<AndroidPlayback>(this);
     connect(androidPlayback.get(), &AndroidPlayback::command, this, &MainWindow::AndroidPlaybackCommand);
+    connect(androidPlayback.get(), &AndroidPlayback::shutdownRequested, this, [this] {
+        PrepareForShutdown();
+        // The task/Activity is already going away. QApplication::quit() would
+        // run closeEvent(), which can wait for an invisible Save/Cancel dialog.
+        // Exit on the Qt thread instead; normal C++ destruction joins workers.
+        QCoreApplication::exit(0);
+    });
     connect(androidPlayback.get(), &AndroidPlayback::error, this, [this](const QString &message) {
         AndroidPlaybackCommand(AndroidPlayback::Stop);
         LogAppend("Android playback service: " + message.toStdString());
@@ -103,6 +99,9 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     statusUpdateTimer.setTimerType(Qt::PreciseTimer);
     statusUpdateTimer.setInterval(16);
     statusUpdateTimer.start();
+#ifdef Q_OS_ANDROID
+    HandleApplicationState(qApp->applicationState());
+#endif
 
     Debug::set_callback(&MainWindow::LogCallback, static_cast<void *>(this));
 
@@ -234,6 +233,7 @@ void MainWindow::SetupMenuBar()
     /* Edit */
     QMenu *editMenu = menuBar()->addMenu("&Edit");
     QAction *editPreferences = editMenu->addAction("Global Preferences");
+    editPreferences->setObjectName("globalPreferencesAction");
     editPreferences->setIcon(QIcon(":/icons/preferences.ico"));
     connect(editPreferences, &QAction::triggered, [this](bool) {
         const auto previousMode = settings->androidAudioOutputMode;
@@ -814,7 +814,7 @@ void MainWindow::PlaylistSwitchSong(int row)
 
 void MainWindow::RunImport(std::function<std::function<void()>(const std::function<bool()> &)> task)
 {
-    if (importBusy) return;
+    if (importBusy || shuttingDown) return;
     if (importWorker.joinable()) importWorker.join();
     importBusy = true;
     importCancelled = std::make_shared<std::atomic<bool>>(false);
@@ -847,13 +847,50 @@ void MainWindow::RunImport(std::function<std::function<void()>(const std::functi
 
 void MainWindow::RunWhenActive(std::function<void()> task)
 {
-#ifdef Q_OS_ANDROID
-    if (qApp->applicationState() != Qt::ApplicationActive) {
+    if (shuttingDown) return;
+    if (!applicationActive) {
         deferredUiTasks.push_back(std::move(task));
         return;
     }
-#endif
     task();
+}
+
+void MainWindow::SaveSettingsWithoutDialog()
+{
+    try { if (settings && settings->dirty) settings->Save(); }
+    catch (const std::exception &error) {
+        // Losing focus (including opening SAF) must not terminate the app if
+        // saving fails. Leave dirty set so a later save can retry.
+        qWarning("agbplay lifecycle: cannot save settings: %s", error.what());
+        LogAppend(std::string("Cannot save settings: ") + error.what());
+    }
+}
+
+void MainWindow::HandleApplicationState(Qt::ApplicationState state)
+{
+    applicationActive = state == Qt::ApplicationActive;
+    if (shuttingDown) return;
+    // Qt owns surface visibility. Never toggle all top-level widgets' update
+    // flags: that also changes dialogs/popups and overrides intentional locks.
+    statusUpdateTimer.setInterval(applicationActive ? 16 : 250);
+    if (applicationActive) QTimer::singleShot(0, this, [this] {
+        if (!applicationActive || shuttingDown) return;
+        auto tasks = std::exchange(deferredUiTasks, {});
+        for (auto &task : tasks) RunWhenActive(std::move(task));
+        update(); // queued repaint, handled by Qt when the surface is exposed
+    });
+    else SaveSettingsWithoutDialog();
+}
+
+void MainWindow::PrepareForShutdown()
+{
+    if (shuttingDown) return;
+    shuttingDown = true;
+    statusUpdateTimer.stop();
+    deferredUiTasks.clear();
+    if (importCancelled) importCancelled->store(true);
+    Stop();
+    SaveSettingsWithoutDialog();
 }
 
 void MainWindow::ImportGsfPaths(const std::vector<std::filesystem::path> &paths)
@@ -981,6 +1018,7 @@ bool MainWindow::AskGameCodeAndUpdateProfile()
 
 void MainWindow::ApplyAudioPreferences(AudioOutputMode previousMode)
 {
+        if (shuttingDown) return;
         if (playbackEngine) {
 #ifdef Q_OS_ANDROID
             if (settings->androidAudioOutputMode != previousMode) {
@@ -1033,6 +1071,7 @@ void MainWindow::LoadDiagnosticWav()
 
 void MainWindow::LoadGame()
 {
+    if (shuttingDown) return;
     QFileDialog fileDialog(this);
     fileDialog.setFileMode(QFileDialog::ExistingFiles);
     fileDialog.setAcceptMode(QFileDialog::AcceptOpen);

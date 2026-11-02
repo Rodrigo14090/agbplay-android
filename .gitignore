@@ -41,4 +41,5 @@ asan.log*
 
 # Local Android audio-route diagnostic snapshots
 /audio-reports/
+/lifecycle-reports/
 __pycache__/
