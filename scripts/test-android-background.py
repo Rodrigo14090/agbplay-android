@@ -55,12 +55,25 @@ def continuous(name, seconds=12):
         time.sleep(1)
         current = state()
         assert current and current["playing"] and not current["error"], current
+        assert current["pid"] == first["pid"], ("Process restarted during playback", first, current)
     last = snapshot(name)
     assert last["sequence"] > first["sequence"] + seconds, (first, last)  # Qt event loop alive
     assert last["frames"] > first["frames"] + seconds * 24000, (first, last)
     assert last["rms"] > 0.00001, last
     assert "agbplay:playback" in active_wake_locks()
     print(f"PASS {name}: frames {first['frames']}..{last['frames']}, RMS={last['rms']}, underruns={last['underruns']}", flush=True)
+
+def startup_ready():
+    # A freshly booted emulator can recreate its first Activity while applying
+    # initial system configuration. Never measure an old JSON file from the
+    # exiting process as if it described the new Activity. Once measuring,
+    # continuous() still fails on every process restart.
+    def ready(s):
+        running = adb("shell", "pidof", PACKAGE).decode().split()
+        return (str(int(s["pid"])) in running and s["sequence"] >= 6
+                and s["applicationState"] == 4 and s["updatesEnabled"]
+                and s["exposed"] and s["inputFocus"] and s["playing"] and s["rms"] > 0.00001)
+    return wait_for(ready, timeout=40)
 
 def media(key):
     adb("shell", "cmd", "media_session", "dispatch", key)
@@ -86,6 +99,7 @@ def main():
         adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
         adb("shell", "wm", "dismiss-keyguard")
         adb("shell", "am", "start", "-W", "-n", f"{PACKAGE}/org.agbplay.android.AgbplayActivity", "--es", "outputMode", MODE)
+        startup_ready()
         continuous("foreground", 4)
         assert state()["backend"] == MODE, state()
         services = adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()

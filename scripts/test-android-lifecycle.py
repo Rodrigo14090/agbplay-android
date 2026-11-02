@@ -103,6 +103,7 @@ def launch():
     adb("shell", "wm", "dismiss-keyguard")
     adb("shell", "run-as", PACKAGE, "rm", "-f", "files/background-probe.json")
     adb("shell", "am", "start", "-W", "-n", ACTIVITY, "--es", "outputMode", "audiotrack")
+    bg.startup_ready()
     foreground()
     bg.continuous("lifecycle-foreground", 4)
 
