@@ -27,6 +27,7 @@
 #include <QScrollPrepareEvent>
 #include <QWheelEvent>
 #include <QScopeGuard>
+#include <QCloseEvent>
 #include <fstream>
 
 class TestTouchUi : public QObject
@@ -126,6 +127,9 @@ private slots:
         dismiss.start(5);
         window.PrepareForShutdown();
         window.PrepareForShutdown(); // idempotent during service/Activity teardown
+        QCloseEvent lateClose;
+        QApplication::sendEvent(&window, &lateClose);
+        QVERIFY(lateClose.isAccepted()); // Qt may post Quit after our exit request
         window.HandleApplicationState(Qt::ApplicationActive);
         window.RunWhenActive([&] { ++deferred; });
         settle();

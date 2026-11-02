@@ -1714,6 +1714,9 @@ void MainWindow::LogAppend(std::string msg)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // Qt's Activity teardown can also enqueue Quit after our shutdown request.
+    // Accept that late close without starting a new hidden Save/Cancel dialog.
+    if (shuttingDown) { event->accept(); return; }
     if (exportBusy) {
         ExportStillInProgress();
         event->ignore();
