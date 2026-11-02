@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QScrollArea>
+#include <QScroller>
 #include <QScreen>
 #include <QInputDialog>
 #include <QStandardPaths>
@@ -24,12 +25,17 @@ QDialog(parent), ui(new Ui::SettingsWindow), settings(settings)
     ui->setupUi(this);
 
 #ifdef Q_OS_ANDROID
+    // This form already owns its mobile scroll area and a fixed button row.
+    // Do not let the global dialog filter wrap and resize it a second time.
+    setProperty("agbplayTouchForm", true);
+    for (auto *button : ui->buttonBox->buttons()) button->setMinimumHeight(48);
     auto *body = new QWidget(this);
     ui->verticalLayout->removeItem(ui->verticalLayout_2);
     body->setLayout(ui->verticalLayout_2);
     auto *scroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setWidget(body);
+    QScroller::grabGesture(scroll->viewport(), QScroller::TouchGesture);
     ui->verticalLayout->insertWidget(0, scroll, 1);
     if (screen()) resize(std::min(480, screen()->availableGeometry().width()), std::min(650, screen()->availableGeometry().height() - 48));
     auto *mode = new QComboBox(this);

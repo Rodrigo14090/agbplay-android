@@ -26,6 +26,12 @@ que borrar datos/reinstalar sea una solución al defecto.
   popups y diálogos, en cada cambio de ApplicationActive. Eso también altera
   bloqueos intencionados de widgets y añade una política paralela a las
   superficies que ya gestiona Qt.
+- El filtro táctil redimensionaba los diálogos durante Show, después de que Qt
+  los hubiera centrado con su tamaño anterior, sin recolocar el origen. También
+  envolvía Preferencias por segunda vez. En la prueba de tablet 1600×1200,
+  Cancelar quedó en (1359,1389), fuera de pantalla. Preferencias conserva ahora
+  su scroll propio y los demás formularios se colocan en la geometría disponible
+  completa; las pruebas rechazan objetivos táctiles fuera de la pantalla.
 - Los callbacks de un servicio ya destruido podían entrar en métodos que
   utilizan una MediaSession/foco liberados. El vencimiento de la pausa mantiene
   el motor C++ pausado; no garantiza que todos los callbacks Java antiguos se

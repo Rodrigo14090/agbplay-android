@@ -29,7 +29,9 @@ bool TouchDialogFilter::eventFilter(QObject *object, QEvent *event)
             layout->setContentsMargins(0, 0, 0, 0);
             layout->addWidget(scroll);
             dialog->setMinimumSize(0, 0);
-            dialog->resize(dialog->screen()->availableGeometry().size());
+            // Show arrives after QDialog may have centered its original small
+            // geometry. Resizing alone leaves the expanded form offscreen.
+            dialog->setGeometry(dialog->screen()->availableGeometry());
         }
     }
 #endif

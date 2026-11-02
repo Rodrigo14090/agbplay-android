@@ -66,6 +66,7 @@ def foreground():
 
 
 def tap(point):
+    assert 0 <= point["x"] < 1600 and 0 <= point["y"] < 1200, ("Touch target outside tablet viewport", point)
     adb("shell", "input", "tap", point["x"], point["y"])
 
 
