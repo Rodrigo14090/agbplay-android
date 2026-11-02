@@ -5,6 +5,7 @@
 #include "SyntheticGsf.hpp"
 #include "SettingsWindow.hpp"
 #include "Settings.hpp"
+#include "Profile.hpp"
 #include "Gsf.hpp"
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -16,6 +17,10 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QMenu>
+#include <QWindow>
+#include <QToolButton>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <fstream>
@@ -82,6 +87,16 @@ public:
                     const auto value = command.readAll().trimmed(); command.close(); command.remove();
                     lastCommand = QString::fromUtf8(value);
                     if (value == "restart") { window.Stop(); window.Play(); }
+                    else if (value == "expire-service")
+                        QJniObject::callStaticMethod<void>("org/agbplay/android/LifecycleProbe", "expirePausedService", "()V");
+                    else if (value == "stale-service-callbacks")
+                        QJniObject::callStaticMethod<void>("org/agbplay/android/LifecycleProbe", "runRetiredCallbacks", "()V");
+                    else if (value == "dirty-profile") window.profile->dirty = true;
+                    else if (value == "remove-task") {
+                        const auto activity = QNativeInterface::QAndroidApplication::context();
+                        QJniObject::callStaticMethod<void>("org/agbplay/android/LifecycleProbe", "removeTask",
+                            "(Landroid/app/Activity;)V", activity.object());
+                    }
                     else if (value == "qt" || value == "audiotrack") {
                         const auto previous = window.settings->androidAudioOutputMode;
                         SettingsWindow options(&window, *window.settings);
@@ -129,6 +144,37 @@ public:
                 const auto play = window.playButton.mapToGlobal(window.playButton.rect().center());
                 result["playX"] = qRound(play.x() * window.devicePixelRatioF());
                 result["playY"] = qRound(play.y() * window.devicePixelRatioF());
+                const auto describe = [&window](QWidget *widget) {
+                    const auto center = widget->mapToGlobal(widget->rect().center());
+                    return QJsonObject{{"x", qRound(center.x() * window.devicePixelRatioF())},
+                        {"y", qRound(center.y() * window.devicePixelRatioF())}, {"visible", widget->isVisible()}};
+                };
+                result["pid"] = double(QCoreApplication::applicationPid());
+                result["updatesEnabled"] = window.updatesEnabled();
+                result["exposed"] = window.windowHandle() && window.windowHandle()->isExposed();
+                result["inputFocus"] = qApp->focusWindow() == window.windowHandle();
+                result["open"] = describe(window.findChild<QWidget *>("openRomButton"));
+                result["menu"] = describe(window.findChild<QWidget *>("touchMenuButton"));
+                const auto *modal = QApplication::activeModalWidget();
+                result["dialog"] = modal && modal->isVisible() ? modal->windowTitle() : QString{};
+                if (modal) {
+                    auto *buttons = modal->findChild<QDialogButtonBox *>();
+                    if (buttons && buttons->button(QDialogButtonBox::Cancel))
+                        result["dialogCancel"] = describe(buttons->button(QDialogButtonBox::Cancel));
+                }
+                QJsonArray menuActions;
+                for (auto *menu : window.findChildren<QMenu *>()) {
+                    if (!menu->isVisible()) continue;
+                    for (auto *action : menu->actions()) {
+                        const auto rect = menu->actionGeometry(action);
+                        if (!action->isVisible() || action->isSeparator() || rect.isEmpty()) continue;
+                        const auto center = menu->mapToGlobal(rect.center());
+                        menuActions.append(QJsonObject{{"text", QString(action->text()).remove('&')},
+                            {"x", qRound(center.x() * window.devicePixelRatioF())},
+                            {"y", qRound(center.y() * window.devicePixelRatioF())}});
+                    }
+                }
+                result["menuActions"] = menuActions;
                 QSaveFile file(directory + "/background-probe.json");
                 if (file.open(QIODevice::WriteOnly)) { file.write(QJsonDocument(result).toJson()); file.commit(); }
             });

@@ -38,8 +38,8 @@ if(ANDROID)
         QT_ANDROID_APP_NAME "agbplay"
         QT_ANDROID_MIN_SDK_VERSION 28
         QT_ANDROID_TARGET_SDK_VERSION 35
-        QT_ANDROID_VERSION_CODE 14
-        QT_ANDROID_VERSION_NAME "1.1.3-audio-compat-dev")
+        QT_ANDROID_VERSION_CODE 15
+        QT_ANDROID_VERSION_NAME "1.1.4-audio-compat-dev")
 endif()
 
 target_compile_options(agbplay-gui PRIVATE -Wall -Wextra -Wconversion)
@@ -73,8 +73,13 @@ if(ANDROID AND AGBPLAY_ANDROID_UI_PROBE)
     find_package(ZLIB REQUIRED)
     qt_add_executable(android-background-probe MANUAL_FINALIZATION ../tests/BackgroundAudioProbe.cpp ${AGBPLAY_GUI_QRC})
     target_link_libraries(android-background-probe PRIVATE agbplay-ui ZLIB::ZLIB)
+    # Reflection/expiry controls belong only to the test APK. Keep them out of
+    # the production Java source directory and out of the release package.
+    set(lifecycle_probe_package "${CMAKE_CURRENT_BINARY_DIR}/lifecycle-probe-package")
+    file(COPY "${PROJECT_SOURCE_DIR}/android/" DESTINATION "${lifecycle_probe_package}")
+    file(COPY "${PROJECT_SOURCE_DIR}/src/tests/android-lifecycle/" DESTINATION "${lifecycle_probe_package}")
     set_target_properties(android-background-probe PROPERTIES
-        QT_ANDROID_PACKAGE_SOURCE_DIR "${PROJECT_SOURCE_DIR}/android"
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${lifecycle_probe_package}"
         QT_ANDROID_PACKAGE_NAME "org.agbplay.android"
         QT_ANDROID_APP_NAME "agbplay background regression"
         QT_ANDROID_MIN_SDK_VERSION 28
