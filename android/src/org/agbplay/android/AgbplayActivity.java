@@ -31,4 +31,8 @@ public final class AgbplayActivity extends QtActivity {
         Log.i("agbplay.lifecycle", "document/activity result: request=" + request + ", result=" + result);
         super.onActivityResult(request, result, data);
     }
+    @Override public void startActivityForResult(Intent intent, int request, Bundle options) {
+        DocumentPickerIntent.normalize(intent);
+        super.startActivityForResult(intent, request, options);
+    }
 }

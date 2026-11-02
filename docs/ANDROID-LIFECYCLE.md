@@ -39,6 +39,16 @@ concreto del usuario. En particular, que sólo una reinstalación lo recupere
 requiere registros del dispositivo para distinguir crash Java, native crash,
 ANR, estado del proveedor de documentos o un fallo del sistema gráfico.
 
+También se comprobó en `QAndroidPlatformFileDialogHelper::setInitialDirectoryUri`
+de Qt 6.11.2 que EXTRA_INITIAL_URI se envía como String. El contrato Android pide
+un Parcelable Uri. AgbplayActivity normaliza únicamente ese hint opcional: convierte
+content:// a Uri y elimina rutas privadas file:// que el proveedor no puede
+abrir. Se conserva el selector Qt, sus tipos MIME, selección múltiple y grants;
+no se reimplementa SAF ni se cambian permisos. Tres pruebas de instrumentación
+comprueban la conversión, la omisión de caché privada y los extras no relacionados.
+Esta incompatibilidad del hint está confirmada en el código; no se atribuye a
+ella el cierre de los menús del dispositivo sin su traza.
+
 ## Cambio de ciclo de vida
 
 AgbplayActivity hereda de la Activity oficial de Qt. Inicio y pantalla apagada
