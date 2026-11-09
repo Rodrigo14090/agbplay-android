@@ -20,7 +20,7 @@ jobs:
           cmake --build build-milkdrop --parallel 3
           xvfb-run -a -s '-screen 0 1280x720x24' ctest --test-dir build-milkdrop -R '^milkdrop$' --output-on-failure
           xvfb-run -a -s '-screen 0 1280x720x24' env QT_SCALE_FACTOR=2 ./build-milkdrop/src/agbplay-gui/test-milkdrop
-          ctest --test-dir build-milkdrop -E '^milkdrop$' --output-on-failure
+          xvfb-run -a -s '-screen 0 1280x720x24' ctest --test-dir build-milkdrop -E '^milkdrop$' --output-on-failure
       - uses: actions/upload-artifact@v4
         if: always()
         with:

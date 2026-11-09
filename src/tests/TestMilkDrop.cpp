@@ -64,7 +64,11 @@ private slots:
         panel.SetFullscreen(true);
         QTRY_VERIFY(panel.Diagnostics()["fullscreen"].toBool());
         QTest::qWait(1000); QTRY_VERIFY(checkSize());
-        panel.SetFullscreen(false);
+        QWidget *presentation = nullptr;
+        for (auto *widget : QApplication::topLevelWidgets())
+            if (widget->objectName() == "milkDropPresentation") presentation = widget;
+        QVERIFY(presentation);
+        QVERIFY(presentation->close()); // Back/window-close must not veto application shutdown
         QTRY_VERIFY(!panel.Diagnostics()["fullscreen"].toBool());
         QTRY_COMPARE(panel.size(), QSize(480,640));
         panel.hide(); QTest::qWait(300);
@@ -77,6 +81,12 @@ private slots:
         QTRY_VERIFY(panel.Diagnostics()["frames"].toInt() > stopped+5);
         QVERIFY(enabled);
         qInfo() << "MilkDrop verified diagnostics:" << panel.Diagnostics();
+        panel.SetFullscreen(true);
+        QTest::qWait(100);
+        panel.PrepareForShutdown();
+        QVERIFY(!panel.IsFullscreen());
+        QVERIFY(!panel.Diagnostics()["running"].toBool());
+        QVERIFY(!enabled);
         panel.SetSource({}, {});
     }
 };

@@ -7,6 +7,7 @@ GPU benchmark and do not certify 60 FPS on the user's hardware.
 """
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import time
@@ -32,6 +33,8 @@ def command(value):
     subprocess.run(["adb", "shell", "run-as", PACKAGE, "tee", "files/output-command.pending"],
                    input=value.encode(), stdout=subprocess.DEVNULL, check=True, timeout=30)
     adb("shell", "run-as", PACKAGE, "mv", "files/output-command.pending", "files/output-command.txt")
+    if value == "remove-task":
+        return None
     return bg.wait_for(lambda s: s["sequence"] > before and s["lastCommand"] == value)
 
 
@@ -46,12 +49,51 @@ def record(name):
     assert abs(d["width"] - round(d["logicalWidth"] * d["dpr"])) <= 1, state
     assert abs(d["height"] - round(d["logicalHeight"] * d["dpr"])) <= 1, state
     assert d["viewportWidth"] == d["width"] and d["viewportHeight"] == d["height"], state
+    assert d["eglSurfaceSize"], "Actual Android EGL surface size was not measured"
     assert d["presetErrors"] == 0 and not d["failed"], state
     (bg.OUT / f"{name}.png").write_bytes(adb("exec-out", "screencap", "-p"))
     (bg.OUT / f"{name}-meminfo.txt").write_bytes(adb("shell", "dumpsys", "meminfo", PACKAGE))
     (bg.OUT / f"{name}-process-stat.txt").write_bytes(
         adb("shell", "run-as", PACKAGE, "cat", f"/proc/{int(state['pid'])}/stat"))
     return state
+
+
+def remove_fullscreen_task():
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
+    bg.wait_for(lambda s: s["applicationState"] == 4)
+    command("milkdrop")
+    command("milkdrop-full")
+    bg.wait_for(lambda s: s["milkdrop"]["fullscreen"] and s["requestedOrientation"] == 0)
+    visual()
+    command("dirty-profile")
+    previous = str(int(bg.state()["pid"]))
+    command("remove-task")
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        try:
+            process = adb("shell", "pidof", PACKAGE).decode().strip()
+        except subprocess.CalledProcessError:
+            process = ""
+        if not process:
+            break
+        time.sleep(0.3)
+    assert not process, "Fullscreen window prevented graceful process shutdown"
+    history = adb("shell", "dumpsys", "activity", "exit-info", PACKAGE).decode()
+    (bg.OUT / "fullscreen-task-exit.txt").write_text(history)
+    entry = re.search(rf"\bpid={previous}\b(.*?)(?=\bApplicationExitInfo\b|\Z)", history, re.S)
+    assert entry and re.search(r"\breason=1\b", entry[0]) and re.search(r"\bstatus=0\b", entry[0]), history
+    log = adb("logcat", "-d", "--pid", previous).decode(errors="replace")
+    (bg.OUT / "fullscreen-task-removal.log").write_text(log)
+    assert "Fatal signal" not in log and "FATAL EXCEPTION" not in log, log[-5000:]
+    assert "PlaybackService" not in adb("shell", "dumpsys", "activity", "services", PACKAGE).decode()
+    adb("shell", "run-as", PACKAGE, "rm", "-f", "files/background-probe.json")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
+    bg.startup_ready()
+    assert str(int(bg.state()["pid"])) != previous
+    command("milkdrop")
+    visual()
+    record("fullscreen-task-relaunched")
+    print("PASS fullscreen task removal with dirty profile: clean exit and fresh GL/PCM after relaunch", flush=True)
 
 
 def exercise(mode, size, width, height, density):
@@ -99,12 +141,16 @@ def exercise(mode, size, width, height, density):
     bg.continuous("restored-inline", 3)
     record("restored-inline")
     command("gsf")
+    command("milkdrop")
+    visual()
     bg.continuous("visualizer-gsf", 3)
     adb("shell", "input", "keyevent", "KEYCODE_HOME")
     bg.wait_for(lambda s: not s["milkdrop"]["running"])
     first = bg.state()["milkdrop"]["frames"]
     bg.continuous("home-audio-only", 3)
     assert bg.state()["milkdrop"]["frames"] == first
+    if size == "tablet" and mode == "audiotrack":
+        remove_fullscreen_task()
     (bg.OUT / "logcat.txt").write_bytes(adb("logcat", "-d"))
     print(f"PASS MilkDrop {size}/{mode}: native framebuffer, three presets, forced landscape/restoration, GSF, screen off/Home audio", flush=True)
 
