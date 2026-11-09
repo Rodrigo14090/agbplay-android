@@ -1,5 +1,6 @@
 #pragma once
 #include "MilkDropWindow.hpp"
+#include "MilkDropLibrary.hpp"
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QComboBox>
@@ -35,8 +36,10 @@ private:
     bool previousVisible = false;
     QVBoxLayout *fullscreenLayout = nullptr;
     std::function<void(bool)> enablePcm;
-    QList<QByteArray> presets;
+    QStringList presets;
     QStringList names;
+    QString textures;
+    MilkDropLibrary *library = nullptr;
     QList<QComboBox *> selectors;
     int selected = 0;
     bool closing = false;

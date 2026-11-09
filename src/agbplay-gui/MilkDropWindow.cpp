@@ -43,6 +43,12 @@ MilkDropWindow::MilkDropWindow() : QOpenGLWindow(NoPartialUpdate)
 MilkDropWindow::~MilkDropWindow() { nextFrame.stop(); Cleanup(); }
 void MilkDropWindow::SetEnabled(bool value) { enabled = value; UpdateRunning(); }
 void MilkDropWindow::SetPreset(QByteArray data) { preset = std::move(data); presetPending = true; }
+void MilkDropWindow::SetFiles(QStringList files, QString textures)
+{
+    paths = std::move(files); texturePath = std::move(textures); filesPending = true;
+}
+void MilkDropWindow::SelectFile(int index) { selectedFile = index; }
+void MilkDropWindow::Navigate(bool previous) { navigation = previous ? -1 : 1; }
 void MilkDropWindow::SetFrameLimit(int limit)
 {
     frameLimit = limit == 30 ? 30 : limit == 60 ? 60 : 0;
@@ -115,7 +121,8 @@ void MilkDropWindow::initializeGL()
         renderer.Create();
         ++contexts;
         initialized = true;
-        presetPending = true;
+        presetPending = paths.isEmpty();
+        filesPending = !paths.isEmpty();
         connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MilkDropWindow::Cleanup, Qt::DirectConnection);
     } catch (const std::exception &error) {
         failed = true;
@@ -158,13 +165,25 @@ void MilkDropWindow::paintGL()
 #endif
         const bool resized = framebuffer != nextSize;
         framebuffer = nextSize;
+        if (filesPending) {
+            std::vector<std::string> files; files.reserve(size_t(paths.size()));
+            for (const auto &path : paths) files.push_back(path.toStdString());
+            renderer.SetFiles(files, texturePath.toStdString()); filesPending = false;
+        }
         if (presetPending) { renderer.Load(preset.toStdString()); presetPending = false; }
+        if (selectedFile >= 0) { renderer.Select(unsigned(selectedFile)); selectedFile = -1; }
+        if (navigation) { renderer.Next(navigation < 0); navigation = 0; }
         std::array<float, VisualizationPcmTap::Frames * 2> pcm{};
         const auto result = readPcm ? readPcm(pcm) : VisualizationPcmTap::Result{};
         pcmFrames += result.frames;
         skippedFrames += result.skippedFrames;
         // No publication during pause: feed silence instead of repeating stale PCM.
         renderer.Render(pcm, framebuffer.width(), framebuffer.height(), targetFps);
+        const int position = int(renderer.Current());
+        if (!paths.isEmpty() && position != lastPosition) {
+            lastPosition = position;
+            emit presetChanged(position);
+        }
         if (resized || frames == 0) {
             GLint actual[4]{};
             context()->functions()->glGetIntegerv(GL_VIEWPORT, actual);
@@ -212,6 +231,8 @@ QJsonObject MilkDropWindow::Diagnostics() const
 {
     return {{"frames", double(frames)}, {"pcmFrames", double(pcmFrames)}, {"skippedVisualFrames", double(skippedFrames)},
         {"contexts", contexts}, {"presetErrors", presetErrors},
+        {"playlistChanges", int(renderer.Changes())}, {"playlistPosition", int(renderer.Current())},
+        {"playlistSize", int(paths.size())},
         {"eglSurfaceSize", nativeSizeQueried},
         {"running", running}, {"initialized", initialized}, {"failed", failed}, {"fps", actualFps},
         {"targetFps", targetFps}, {"width", framebuffer.width()}, {"height", framebuffer.height()},

@@ -35,17 +35,27 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
     viewport->setObjectName("milkDropViewport");
     viewport->setMinimumSize(160, 100);
     layout.setContentsMargins(0, 0, 0, 0);
+    const QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/milkdrop";
+    QDir().mkpath(directory);
     for (const auto &name : {"Aurora", "Orbitas", "Espectro"}) {
-        QFile file(QString(":/milkdrop/%1.milk").arg(name));
-        if (file.open(QIODevice::ReadOnly)) { presets.append(file.readAll()); names.append(name); }
+        QFile resource(QString(":/milkdrop/%1.milk").arg(name));
+        const QString path = directory + "/" + name + ".milk";
+        if (!QFile::exists(path) && resource.open(QIODevice::ReadOnly)) {
+            QSaveFile copy(path);
+            if (copy.open(QIODevice::WriteOnly)) { copy.write(resource.readAll()); copy.commit(); }
+        }
+        if (QFile::exists(path)) { presets.append(path); names.append(name); }
     }
-    QDir collection(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/milkdrop");
+    QDir collection(directory);
     for (const auto &entry : collection.entryInfoList({"*.milk"}, QDir::Files, QDir::Name)) {
-        QFile file(entry.filePath());
-        if (file.size() <= 256 * 1024 && file.open(QIODevice::ReadOnly)) {
-            presets.append(file.readAll()); names.append(entry.completeBaseName());
+        if (!presets.contains(entry.filePath()) && entry.size() <= 256 * 1024) {
+            presets.append(entry.filePath()); names.append(entry.completeBaseName());
         }
     }
+    if (presets.isEmpty()) {
+        QFile resource(":/milkdrop/Aurora.milk");
+        if (resource.open(QIODevice::ReadOnly)) surface->SetPreset(resource.readAll());
+    } else surface->SetFiles(presets, {});
     layout.addWidget(viewport, 1);
     layout.addWidget(MakeControls(false));
     auto *statistics = new QLabel(this);
@@ -53,6 +63,33 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
     statistics->setWordWrap(true);
     layout.addWidget(statistics);
     connect(surface, &MilkDropWindow::statisticsChanged, statistics, &QLabel::setText);
+    connect(surface, &MilkDropWindow::presetChanged, this, [this](int index) {
+        if (index < 0 || index >= presets.size()) return;
+        selected = index;
+        for (auto *selector : selectors) { QSignalBlocker block(selector); selector->setCurrentIndex(index); }
+    });
+    auto *libraryStatus = new QLabel(this);
+    libraryStatus->setWordWrap(true);
+    layout.addWidget(libraryStatus);
+    library = new MilkDropLibrary(this);
+    connect(library, &MilkDropLibrary::status, libraryStatus, &QLabel::setText);
+    connect(library, &MilkDropLibrary::ready, this, [this](const QStringList &files, const QString &textureDir) {
+        textures = textureDir;
+        presets.append(files);
+        for (const auto &path : files) names.append(QFileInfo(path).completeBaseName());
+        for (auto *selector : selectors) {
+            QSignalBlocker blocker(selector);
+            QStringList added; added.reserve(files.size());
+            for (const auto &path : files) added.append(QFileInfo(path).completeBaseName());
+            selector->addItems(added);
+        }
+        surface->SetFiles(presets, textures);
+    });
+#ifdef Q_OS_ANDROID
+    library->Start(directory);
+#else
+    if (qEnvironmentVariableIsSet("AGBPLAY_MILKDROP_DOWNLOAD")) library->Start(directory);
+#endif
     connect(surface, &MilkDropWindow::runningChanged, this, [this](bool running) { if (enablePcm) enablePcm(running); });
     selected = std::clamp(QSettings().value("milkdrop/preset", 0).toInt(), 0, std::max(0, int(presets.size()) - 1));
     SelectPreset(selected);
@@ -107,8 +144,8 @@ QWidget *MilkDropPanel::MakeControls(bool full)
     buttons->addWidget(previous); buttons->addWidget(selector, 1); buttons->addWidget(next); buttons->addWidget(toggle);
     for (auto *button : {previous, next, toggle}) { button->setMinimumSize(48, 48); button->setMaximumWidth(64); }
     selector->setMinimumHeight(48);
-    connect(previous, &QPushButton::clicked, this, [this] { SelectPreset(selected - 1); });
-    connect(next, &QPushButton::clicked, this, [this] { SelectPreset(selected + 1); });
+    connect(previous, &QPushButton::clicked, this, [this] { surface->Navigate(true); });
+    connect(next, &QPushButton::clicked, this, [this] { surface->Navigate(false); });
     connect(selector, &QComboBox::currentIndexChanged, this, &MilkDropPanel::SelectPreset);
     connect(toggle, &QPushButton::clicked, this, [this, full] { SetFullscreen(!full); });
     if (!full) {
@@ -123,7 +160,7 @@ void MilkDropPanel::SelectPreset(int index)
 {
     if (presets.isEmpty()) return;
     selected = (index % int(presets.size()) + int(presets.size())) % int(presets.size());
-    surface->SetPreset(presets[selected]);
+    surface->SelectFile(selected);
     for (auto *selector : selectors) { QSignalBlocker block(selector); selector->setCurrentIndex(selected); }
     QSettings().setValue("milkdrop/preset", selected);
 }
@@ -140,7 +177,8 @@ void MilkDropPanel::ImportPreset()
     QDir().mkpath(directory);
     QSaveFile copy(directory + "/" + name + ".milk");
     if (!copy.open(QIODevice::WriteOnly) || copy.write(data) != data.size() || !copy.commit()) return;
-    presets.append(data); names.append(name);
+    presets.append(directory + "/" + name + ".milk"); names.append(name);
+    surface->SetFiles(presets, textures);
     for (auto *selector : selectors) { QSignalBlocker block(selector); selector->addItem(name); }
     SelectPreset(int(presets.size()) - 1);
 }
@@ -172,7 +210,7 @@ void MilkDropPanel::SetFullscreen(bool value)
         fullscreenLayout = new QVBoxLayout(host);
         fullscreenLayout->setContentsMargins(0, 0, 0, 0);
         fullscreenLayout->addWidget(viewport, 1);
-        fullscreenLayout->addWidget(MakeControls(true));
+        fullscreenLayout->setSpacing(0);
         new QShortcut(QKeySequence(Qt::Key_Escape), host, [this] { SetFullscreen(false); });
         new QShortcut(QKeySequence(Qt::Key_Back), host, [this] { SetFullscreen(false); });
         SetOrientation(true);

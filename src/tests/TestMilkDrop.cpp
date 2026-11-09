@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QGuiApplication>
 #include <QImage>
+#include <QPushButton>
 #include <QTest>
 #include <QDir>
 #include <cmath>
@@ -77,6 +78,10 @@ private slots:
             }
             QCOMPARE(panel.Diagnostics()["presetErrors"].toInt(), 0);
         }
+        const auto initialChanges = panel.Diagnostics()["playlistChanges"].toInt();
+        const auto initialPosition = panel.Diagnostics()["playlistPosition"].toInt();
+        QTRY_VERIFY_WITH_TIMEOUT(panel.Diagnostics()["playlistChanges"].toInt() > initialChanges, 20000);
+        QVERIFY(panel.Diagnostics()["playlistPosition"].toInt() != initialPosition);
         panel.SetFullscreen(true);
         QTRY_VERIFY(panel.Diagnostics()["fullscreen"].toBool());
         QTest::qWait(1000); QTRY_VERIFY(checkSize());
@@ -84,6 +89,7 @@ private slots:
         for (auto *widget : QApplication::topLevelWidgets())
             if (widget->objectName() == "milkDropPresentation") presentation = widget;
         QVERIFY(presentation);
+        QVERIFY(presentation->findChildren<QPushButton *>().isEmpty());
         QVERIFY(presentation->close()); // Back/window-close must not veto application shutdown
         QTRY_VERIFY(!panel.Diagnostics()["fullscreen"].toBool());
         QTRY_COMPARE(panel.size(), QSize(480,640));

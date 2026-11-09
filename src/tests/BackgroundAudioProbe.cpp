@@ -182,7 +182,9 @@ public:
                 milkdrop["fullscreenButton"] = describe(window.milkDrop->findChild<QWidget *>("milkDropFullscreen"));
                 for (auto *top : QApplication::topLevelWidgets())
                     if (top->objectName() == "milkDropPresentation" && top->isVisible())
-                        milkdrop["exitButton"] = describe(top->findChild<QWidget *>("milkDropExitFullscreen"));
+                        if (auto *exit = top->findChild<QWidget *>("milkDropExitFullscreen"))
+                            milkdrop["exitButton"] = describe(exit);
+                        else milkdrop["exitButton"] = QJsonObject{{"visible", false}};
                 result["milkdrop"] = milkdrop;
 #endif
                 result["menu"] = describe(window.findChild<QWidget *>("touchMenuButton"));

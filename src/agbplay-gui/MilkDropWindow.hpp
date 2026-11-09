@@ -17,11 +17,15 @@ public:
     void SetSource(Source source) { readPcm = std::move(source); }
     void SetEnabled(bool value);
     void SetPreset(QByteArray data);
+    void SetFiles(QStringList paths, QString textures);
+    void SelectFile(int index);
+    void Navigate(bool previous);
     void SetFrameLimit(int limit); // 0 = automatic 60 -> 30 -> 20 -> 15
     QJsonObject Diagnostics() const;
 signals:
     void runningChanged(bool running);
     void statisticsChanged(const QString &text);
+    void presetChanged(int index);
 protected:
     bool event(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -36,6 +40,12 @@ private:
     ProjectMRenderer renderer;
     Source readPcm;
     QByteArray preset;
+    QStringList paths;
+    QString texturePath;
+    bool filesPending = false;
+    int selectedFile = -1;
+    int navigation = 0;
+    int lastPosition = -1;
     QTimer nextFrame;
     QElapsedTimer clock, measurement;
     qint64 deadline = 0, renderNs = 0, maxRenderNs = 0;

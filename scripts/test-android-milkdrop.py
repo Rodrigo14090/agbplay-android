@@ -148,9 +148,8 @@ def exercise(mode, size, width, height, density):
     adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
     adb("shell", "wm", "dismiss-keyguard")
     visual()
-    point = bg.state()["milkdrop"]["exitButton"]
-    assert point["visible"]
-    adb("shell", "input", "tap", point["x"], point["y"])
+    assert not bg.state()["milkdrop"]["exitButton"]["visible"]
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
     bg.wait_for(lambda s: not s["milkdrop"]["fullscreen"]
                 and s["requestedOrientation"] == original["requestedOrientation"]
                 and s["deviceOrientation"] == original["deviceOrientation"])
