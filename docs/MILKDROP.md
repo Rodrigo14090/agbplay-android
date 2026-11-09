@@ -1,4 +1,4 @@
-# MilkDrop / projectM experimental (1.2.0)
+# MilkDrop / projectM experimental (1.3.0)
 
 Base conservada: `android/audio-compatibility` en
 `8fc1d934a2c2c0bb44fdf3d6428c1b386c9ddefe`. Todo el trabajo está en
@@ -38,8 +38,9 @@ contenedor GL, conservando pestaña, selección y geometría de la interfaz orig
 La ventana original se oculta durante la presentación para evitar mantener un
 segundo backing store Qt pintando detrás del visualizador.
 En Android se guarda requestedOrientation y se solicita LANDSCAPE (no sensor).
-Salir/Back/Escape devuelve el contenedor y restaura el valor anterior, incluso
-UNSPECIFIED. Los controles de presets y salida quedan fuera de la superficie GL.
+Back/Escape devuelve el contenedor y restaura el valor anterior, incluso
+UNSPECIFIED. La presentación no contiene controles superpuestos; Android oculta
+las barras de estado y navegación y restaura su estado al salir.
 
 ## PCM y concurrencia
 
@@ -80,12 +81,61 @@ si el bucle Qt ya terminó.
 
 ## Presets y licencias
 
-Tres presets originales pequeños —Aurora, Orbitas y Espectro—, sin texturas ni
-paquetes de origen/licencia dudosos. Sintaxis MilkDrop, licencia MIT incluida.
-‹/› y el selector cambian de preset. El botón + importa un .milk mediante el
-selector de documentos Qt/SAF, copia hasta 256 KiB en datos privados y persiste
-la colección; no requiere permisos generales. La selección se guarda con QSettings.
-Los presets que requieran texturas externas no las importan automáticamente.
+Tres presets pequeños de respaldo (Aurora, Orbitas y Espectro) se incluyen con
+licencia MIT. La primera ejecución Android descarga automáticamente directamente
+desde los repositorios oficiales de projectM los 552 presets originales, los
+9.795 Cream of the Crop y 67 texturas. Los ZIP suman aproximadamente 36 MiB;
+los archivos extraídos ocupan unos 119 MiB. Requiere conexión para la primera
+instalación; después se indexan y utilizan localmente sin conexión. Ante error,
+los tres presets de respaldo siguen disponibles y la descarga se reintenta al
+reiniciar la aplicación. ‹/› y el selector siguen disponibles en la vista normal.
+El botón + importa presets individuales. Las rutas, no los contenidos completos,
+se almacenan en la playlist; projectM carga cada preset al reproducirlo.
+
+Se usan la playlist de projectM 4.1.8, rotación aleatoria cada 10 s y fundido de
+2,7 s, sin cortes automáticos por ritmo. El cambio automático elige una entrada
+diferente de la anterior. Las rutas se indexan en un hilo de trabajo. El análisis
+del preset y la compilación de shaders los efectúa projectM en el contexto gráfico;
+pueden ralentizar temporalmente la interfaz o la GPU, pero no esperan ni bloquean
+el callback de audio. No es posible garantizar que todos los presets de terceros
+sean compatibles con todos los controladores gráficos.
+
+### Origen, integridad y límites
+
+- [MilkDrop original](https://github.com/projectM-visualizer/presets-milkdrop-original),
+  commit `e03b83e3338d8f1ed6cbcf908c719f249ef24288`, SHA-256 ZIP
+  `4479bbd10e4f4a005d636f7b0ed26004042541a62a925ca97e12ff13765b688d`.
+- [Cream of the Crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop),
+  commit `0180df21f5e0bd39b9060cc5de420ed2f1f9e509`, SHA-256 ZIP
+  `5600f974497d8f73295393fbdf866895ceb89efe82892f5e2d019358b2659202`.
+- [Texturas](https://github.com/projectM-visualizer/presets-milkdrop-texture-pack),
+  commit `6368812f27bc747b517218fbf89d21d59afce4d9`, SHA-256 ZIP
+  `38e93612f79a313830480d7458d8eb065d2b67992211a5dd0c92ef87b8607f6a`.
+
+Se obtiene cada ZIP desde `https://codeload.github.com` con TLS, sin redirecciones,
+y se valida el hash completo antes de extraer. Se rechazan rutas absolutas,
+recorridos, enlaces simbólicos, nombres duplicados, ficheros inesperados y tamaños
+excesivos; hay límites por ZIP, archivo y total. No se ejecutan scripts descargados.
+La extracción se realiza en una carpeta privada temporal y sólo se activa tras
+completar los tres paquetes. El índice y los ficheros permanecen en datos privados;
+para actualizar los paquetes hay que revisar y cambiar explícitamente commits y
+hashes. HTTPS y hashes fijados protegen la integridad, no hacen inocuo el contenido:
+los presets contienen ecuaciones y shaders procesados por projectM y el driver.
+
+**Licencias:** el README de Cream afirma que la mayoría de presets carecen de
+licencia explícita y supone que son de dominio público; esa suposición no es una
+cesión comprobada de derechos de cada autor. Los repositorios original y de
+texturas tampoco publican una licencia global clara. La aplicación descarga los
+archivos de sus fuentes oficiales y no los incorpora al APK; su distribución y
+reutilización deben revisarse según los derechos de cada autor. No se atribuye a
+estos paquetes la licencia MIT de los tres presets propios.
+
+**Investigación externa:** se revisaron el código y la guía MilkDrop del repositorio
+[Spotifast](https://github.com/crmne/spotifast), la API y código de playlist de
+projectM 4.1.8 y los tres repositorios de colecciones. El sitio publicado
+spotifast.rocks no fue accesible desde la red de este entorno; la guía del
+repositorio documenta la rotación y descarga, pero no sustituye una prueba del
+sitio publicado.
 
 projectM es LGPL-2.1-or-later; el evaluador y HLSL parser son MIT; GLM se usa bajo
 su opción MIT; SOIL2/stb incluyen dominio público y etc1_utils es Apache-2.0.
@@ -111,6 +161,9 @@ Pruebas añadidas:
 
 - Tap independiente: ráfagas de 96 frames, productor más rápido que el lector,
   latest-wins, bloques parciales, epochs y un millón de frames concurrentes LR.
+- Cadencia de render: 300 fotogramas con trabajo simulado de 2 ms, 140 ms y 2 s.
+  Se mantiene el objetivo aproximado de 60 FPS en el caso rápido y al menos
+  tanto descanso como trabajo de envío en los casos lentos, incluso bajo 1 FPS.
 - Motor real con salida de pruebas por callback y push: 512 frames estéreo del
   tap idénticos muestra por muestra al PCM entregado, incluida la rampa de volumen.
 - Linux/Xvfb/GL: tres presets con imagen no negra, framebuffer nativo, pantalla
@@ -127,6 +180,36 @@ del proceso y logs por escenario en los artefactos de CI. FPS mide presentación
 CPU submit es tiempo de pared del envío GL e incluye posibles esperas del driver,
 no tiempo GPU. No se presentan contadores HWUI como tiempo GPU de projectM.
 Los resultados y límites físicos pendientes se registrarán junto al APK exacto.
+
+## Comprobación en el dispositivo
+
+1. Abrir una ROM o conjunto GSF y elegir la pestaña MilkDrop. ‹/› y el selector
+   deben cambiar presets; tras la primera descarga la rotación aleatoria debe cambiar cada diez segundos; el botón de maximizar entra en presentación.
+2. Con la rotación automática desactivada, entrar desde orientación vertical:
+   la presentación debe quedar horizontal. Back debe devolver la orientación
+   y la vista integrada anteriores. Repetir desde la tablet en horizontal.
+3. Comparar la misma canción con MilkDrop visible y con la pestaña Pistas.
+   Repetir con Automático/Qt y Compatibilidad multimedia/AudioTrack en las
+   preferencias existentes. No confundir los descartes visuales con pérdidas PCM.
+4. Apagar la pantalla y minimizar: la música debe continuar y los fotogramas
+   gráficos deben detenerse. Volver, pausar/reanudar, cambiar canciones y quitar
+   la tarea desde recientes; el cierre debe detener la música y permitir relanzar.
+5. Repetir durante una escucha prolongada, incluyendo los presets propios que
+   se importen. 60 FPS, consumo/temperatura y memoria de GPU requieren hardware
+   real; un render por software del emulador no representa la MatePad.
+
+Para guardar registros sin borrar datos ni reinstalar, con ADB:
+
+```bash
+./scripts/collect-android-lifecycle.sh milkdrop
+adb logcat -d -v threadtime > lifecycle-reports/milkdrop/graphics-full-logcat.txt
+adb shell dumpsys meminfo org.agbplay.android > lifecycle-reports/milkdrop/memory.txt
+```
+
+La captura adicional incluye el tag `default` de Qt donde se publican las medidas
+MilkDrop. Los archivos quedan en el directorio local excluido de Git. Anotar
+dispositivo/versión, backend, preset, modo integrado/completo, FPS y si hubo
+interrupciones audibles. Los tiempos de envío GL no equivalen al tiempo GPU.
 
 La prueba definitiva de 60 FPS, coste GPU/energía, memoria prolongada y ausencia
 de pérdidas con música real requiere el teléfono/MatePad. Un emulador o llvmpipe
