@@ -20,9 +20,10 @@ el FBO intermedio de QOpenGLWidget y una copia/escalado adicional. El resto de l
 aplicación sigue en Qt Widgets. La pestaña independiente conserva Pistas/ROM/Log
 y los visualizadores de notas/instrumentos, también en las distribuciones amplias.
 
-El viewport se calcula con tamaño lógico × devicePixelRatio, sin reducir la
-resolución, MSAA ni profundidad/stencil innecesarios. Se registra también el
-viewport leído de GL. Se solicita swap interval 1; frameSwapped y un único timer
+En Android se consulta el tamaño real de la superficie EGL actual y se contrasta
+con tamaño lógico × devicePixelRatio; se registra también el viewport leído de
+GL. No se reduce resolución ni se añade MSAA/profundidad/stencil innecesarios.
+Se solicita swap interval 1; frameSwapped y un único timer
 preciso marcan los próximos fotogramas, sin ráfagas para recuperar retrasos.
 Objetivo inicial 60 FPS. Cada dos segundos, el modo automático puede bajar a
 30/20/15 si el rendimiento o tiempo de envío GL no sostiene el objetivo. Nunca
@@ -31,6 +32,8 @@ mesh de ecuaciones visuales se fija en 32×24; no es el remuestreador de audio.
 
 La pantalla completa es una ventana Qt de presentación: se mueve únicamente el
 contenedor GL, conservando pestaña, selección y geometría de la interfaz original.
+La ventana original se oculta durante la presentación para evitar mantener un
+segundo backing store Qt pintando detrás del visualizador.
 En Android se guarda requestedOrientation y se solicita LANDSCAPE (no sensor).
 Salir/Back/Escape devuelve el contenedor y restaura el valor anterior, incluso
 UNSPECIFIED. Los controles de presets y salida quedan fuera de la superficie GL.
@@ -50,6 +53,8 @@ callback Qt ni llamadas a projectM en el escritor. Las ráfagas pequeñas se
 ensamblan sin romper LRLR; los bloques visuales no leídos pueden reemplazarse.
 Nunca se devuelve presión al FIFO de reproducción. Un epoch descarta bloques
 parciales/antiguos al ocultar o volver a habilitar la visualización.
+Los descartes visuales son normales incluso a 60 FPS: a 48 kHz se publican
+93.75 bloques/s de 512 frames. No son underruns ni frames perdidos del audio.
 
 El renderizado y todas las llamadas de projectM pertenecen al hilo/contexto GL.
 Sin PCM nuevo se entrega silencio, sin repetir el último bloque. projectM no
@@ -61,6 +66,14 @@ Home, pantalla apagada o pestaña oculta detienen la cadena de render y deshabil
 el tap. La música y el servicio multimedia siguen sus reglas anteriores. El
 callback aboutToBeDestroyed libera projectM con el contexto actual; initializeGL
 lo crea de nuevo y reaplica el preset. No se conserva un handle GL obsoleto.
+La inicialización se aplaza hasta un fotograma expuesto, interceptando tanto
+Paint como UpdateRequest de Qt: beginPaint de QOpenGLWindow no protege el acceso
+a su tabla GL si falla la creación del contexto. Una inicialización fallida se
+rechaza antes de ese camino; el reproductor y su bucle de control siguen vivos.
+El cierre libera los objetos con una superficie offscreen del mismo contexto,
+sin esperar a que vuelva una EGLSurface de Android ya retirada. La presentación
+se cierra antes del quit, acepta Back/cierre y también libera deletes diferidos
+si el bucle Qt ya terminó.
 
 ## Presets y licencias
 
@@ -95,11 +108,16 @@ Pruebas añadidas:
 
 - Tap independiente: ráfagas de 96 frames, productor más rápido que el lector,
   latest-wins, bloques parciales, epochs y un millón de frames concurrentes LR.
+- Motor real con salida de pruebas por callback y push: 512 frames estéreo del
+  tap idénticos muestra por muestra al PCM entregado, incluida la rampa de volumen.
 - Linux/Xvfb/GL: tres presets con imagen no negra, framebuffer nativo, pantalla
   completa/salida, pausa del render al ocultar y reanudación.
 - Android: probe real con GBA y GSF, ambos backends, teléfono/tablet, orientación
   solicitada y efectiva, restauración, viewport GL/DPR, fotogramas y continuidad
   PCM, Home y pantalla apagada. Se conservan las suites anteriores.
+- Contexto no disponible: selección/interfaz y temporizador siguen funcionando
+  sin intentar pintar mediante una tabla GL inválida. Retirada de tarea desde
+  pantalla completa con perfil pendiente: salida EXIT_SELF/0 y relanzamiento.
 
 `scripts/test-android-milkdrop.py` conserva capturas, JSON, meminfo, CPU ticks
 del proceso y logs por escenario en los artefactos de CI. FPS mide presentación;

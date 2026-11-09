@@ -10,6 +10,22 @@ class TestMilkDrop : public QObject
 {
     Q_OBJECT
 private slots:
+    void unavailableContextKeepsControlLoopAlive()
+    {
+        if (qGuiApp->platformName() != "offscreen" || !qEnvironmentVariableIsEmpty("DISPLAY"))
+            QSKIP("Run explicitly with offscreen and no DISPLAY to test unavailable GL");
+        MilkDropPanel panel;
+        bool enabled = false;
+        panel.SetSource({}, [&](bool value) { enabled = value; });
+        panel.resize(480, 640); panel.show(); panel.activateWindow();
+        QTRY_VERIFY(panel.Diagnostics()["failed"].toBool());
+        QVERIFY(!enabled);
+        bool delivered = false;
+        QTimer::singleShot(0, &panel, [&] { delivered = true; });
+        panel.SelectPreset(1);
+        QTRY_VERIFY(delivered);
+        QVERIFY(!panel.Diagnostics()["running"].toBool());
+    }
     void nativeRenderingAndLifecycle()
     {
         MilkDropPanel panel;

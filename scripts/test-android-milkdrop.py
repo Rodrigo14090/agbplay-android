@@ -43,6 +43,17 @@ def visual():
                        and s["milkdrop"]["pcmFrames"] > 0 and not s["milkdrop"]["failed"])
 
 
+def resources(name):
+    state = bg.state()
+    (bg.OUT / f"{name}-meminfo.txt").write_bytes(adb("shell", "dumpsys", "meminfo", PACKAGE))
+    raw = adb("shell", "run-as", PACKAGE, "cat", f"/proc/{int(state['pid'])}/stat")
+    (bg.OUT / f"{name}-process-stat.txt").write_bytes(raw)
+    fields = raw.decode().rsplit(")", 1)[1].split()
+    (bg.OUT / f"{name}-resources.json").write_text(json.dumps({
+        "hostMonotonicSeconds": time.monotonic(), "userTicks": int(fields[11]),
+        "systemTicks": int(fields[12]), "threads": int(fields[17]), "rssPages": int(fields[21])}, indent=2))
+
+
 def record(name):
     state = bg.snapshot(name)
     d = state["milkdrop"]
@@ -52,9 +63,7 @@ def record(name):
     assert d["eglSurfaceSize"], "Actual Android EGL surface size was not measured"
     assert d["presetErrors"] == 0 and not d["failed"], state
     (bg.OUT / f"{name}.png").write_bytes(adb("exec-out", "screencap", "-p"))
-    (bg.OUT / f"{name}-meminfo.txt").write_bytes(adb("shell", "dumpsys", "meminfo", PACKAGE))
-    (bg.OUT / f"{name}-process-stat.txt").write_bytes(
-        adb("shell", "run-as", PACKAGE, "cat", f"/proc/{int(state['pid'])}/stat"))
+    resources(name)
     return state
 
 
@@ -111,7 +120,9 @@ def exercise(mode, size, width, height, density):
     if bg.state()["backend"] != mode:
         command(mode)
     bg.wait_for(lambda s: s["backend"] == mode and s["playing"] and s["rms"] > 0.00001)
+    resources("baseline-start")
     bg.continuous("baseline-hidden-visualizer", 4)
+    resources("baseline-hidden-visualizer")
     original = bg.state()
     command("milkdrop")
     visual()

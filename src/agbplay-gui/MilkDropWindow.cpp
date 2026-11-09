@@ -2,6 +2,7 @@
 #include <QGuiApplication>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
+#include <QOffscreenSurface>
 #include <QSurfaceFormat>
 #include <QDebug>
 #include <QResizeEvent>
@@ -83,7 +84,10 @@ bool MilkDropWindow::EnsureContext()
 }
 bool MilkDropWindow::event(QEvent *event)
 {
-    if (event->type() == QEvent::UpdateRequest && (!running || !EnsureContext())) return true;
+    if (event->type() == QEvent::UpdateRequest || event->type() == QEvent::Paint) {
+        UpdateRunning();
+        if (!running || !EnsureContext()) return true;
+    }
     return QOpenGLWindow::event(event);
 }
 void MilkDropWindow::initializeGL()
@@ -114,9 +118,15 @@ void MilkDropWindow::initializeGL()
 void MilkDropWindow::Cleanup()
 {
     if (!initialized) return;
-    makeCurrent();
+    // Android may already have destroyed the window's EGLSurface. A tiny
+    // offscreen surface lets the same context delete its GL objects without
+    // waiting for that hidden/destroyed native window to reappear.
+    QOffscreenSurface cleanupSurface(context()->screen());
+    cleanupSurface.setFormat(context()->format());
+    cleanupSurface.create();
+    if (!context()->makeCurrent(&cleanupSurface) && isExposed()) makeCurrent();
     renderer.Destroy();
-    doneCurrent();
+    context()->doneCurrent();
     initialized = false;
     disconnect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MilkDropWindow::Cleanup);
 }
