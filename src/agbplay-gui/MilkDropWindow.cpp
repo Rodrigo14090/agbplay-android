@@ -89,6 +89,13 @@ bool MilkDropWindow::event(QEvent *event)
     if (event->type() == QEvent::UpdateRequest || event->type() == QEvent::Paint) {
         UpdateRunning();
         if (!running || !EnsureContext()) return true;
+        // Native expose/paint requests must respect the same budget as our
+        // timer. Otherwise they could bypass the yield after a slow frame.
+        const auto remaining = deadline - clock.nsecsElapsed();
+        if (remaining > 0) {
+            if (!nextFrame.isActive()) nextFrame.start(static_cast<int>((remaining + 999999) / 1000000));
+            return true;
+        }
     }
     return QOpenGLWindow::event(event);
 }
