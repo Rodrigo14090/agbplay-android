@@ -7,6 +7,7 @@
 #include "MP2KContext.hpp"
 #include "Profile.hpp"
 #include "DiagnosticWav.hpp"
+#include "VisualizationPcmTap.hpp"
 
 #include <atomic>
 #include <bitset>
@@ -80,6 +81,8 @@ public:
     void PollOutputDiagnostics();
     std::string TakeError();
     AudioDiagnostics TakeAudioDiagnostics() noexcept;
+    void EnableVisualization(bool enabled) noexcept { visualizationPcm.Enable(enabled); }
+    VisualizationPcmTap::Result ReadVisualizationPcm(std::span<float> stereo) noexcept { return visualizationPcm.Read(stereo); }
 
 private:
     void threadWorker();
@@ -120,6 +123,7 @@ private:
     std::atomic<bool> songEnded = false;
 
     AudioFrameQueue queue;
+    VisualizationPcmTap visualizationPcm;
     AudioDataReady pcmReady;
     const uint32_t sampleRate;
     const AudioBufferPolicy bufferPolicy;

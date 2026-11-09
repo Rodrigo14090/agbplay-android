@@ -639,6 +639,9 @@ size_t PlaybackEngine::ConsumeAudio(std::span<float> output, bool pad) noexcept
         output[i + 1] *= self.playerThreadVolumeCur;
         self.playerThreadVolumeCur += self.volumeRampCoeff * (target - self.playerThreadVolumeCur);
     }
+    // Observational copy only: both backends have consumed this same post-gain
+    // PCM. The visual reader cannot hold up synthesis, playback or transport.
+    self.visualizationPcm.Publish(output);
 #if defined(__ANDROID__) || defined(AGBPLAY_AUDIO_DIAGNOSTICS)
     // Bounded PCM tap: only a copy on the realtime thread. Analysis runs on
     // the producer. If telemetry fills, drop telemetry, never playback PCM.
