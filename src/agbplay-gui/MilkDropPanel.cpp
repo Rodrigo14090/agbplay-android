@@ -137,7 +137,9 @@ void MilkDropPanel::SetOrientation(bool landscape)
 #ifdef Q_OS_ANDROID
     // Java marshals this to the Activity main thread and restores its exact
     // previous requestedOrientation, including UNSPECIFIED/sensor settings.
-    QJniObject::callStaticMethod<void>("org/agbplay/android/MilkDropOrientation", "setLandscape", "(Z)V", jboolean(landscape));
+    const auto activity = QNativeInterface::QAndroidApplication::context();
+    QJniObject::callStaticMethod<void>("org/agbplay/android/MilkDropOrientation", "setLandscape",
+        "(Landroid/app/Activity;Z)V", activity.object(), jboolean(landscape));
 #else
     Q_UNUSED(landscape);
 #endif

@@ -3,15 +3,13 @@ package org.agbplay.android;
 import android.app.Activity;
 import android.content.pm.ActivityInfo;
 import java.lang.ref.WeakReference;
-import org.qtproject.qt.android.QtNative;
 
 /** Only presentation orientation; never participates in audio or services. */
 public final class MilkDropOrientation {
     private static WeakReference<Activity> owner = new WeakReference<>(null);
     private static int previous = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
     private MilkDropOrientation() { }
-    public static void setLandscape(boolean enabled) {
-        final Activity activity = QtNative.activity();
+    public static void setLandscape(Activity activity, boolean enabled) {
         if (activity == null) return;
         activity.runOnUiThread(() -> {
             if (enabled) {
