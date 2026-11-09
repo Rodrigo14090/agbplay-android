@@ -604,13 +604,14 @@ private slots:
                 QCOMPARE(songs->listWidget.count(), 40);
                 QCOMPARE(songs->listWidget.currentRow(), 12);
                 QVERIFY(track->isMuted());
-                if (touch->mode() == TouchPlayerLayout::Mode::Compact)
+                if (touch->mode() == TouchPlayerLayout::Mode::Compact) {
 #ifdef AGBPLAY_PROJECTM
                     QCOMPARE(tabs->count(), 6);
                     QCOMPARE(tabs->tabText(5), QString("MilkDrop"));
 #else
                     QCOMPARE(tabs->count(), 5);
 #endif
+                }
             }
         }
         window.resize(360, 740);

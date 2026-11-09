@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QSaveFile>
 #include <QCloseEvent>
+#include <QScreen>
 #include <algorithm>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
@@ -158,6 +159,9 @@ void MilkDropPanel::SetFullscreen(bool value)
         new QShortcut(QKeySequence(Qt::Key_Escape), host, [this] { SetFullscreen(false); });
         new QShortcut(QKeySequence(Qt::Key_Back), host, [this] { SetFullscreen(false); });
         SetOrientation(true);
+        // Also size explicitly: window systems without a WM may ignore the
+        // fullscreen state hint. Android resizes again when landscape arrives.
+        host->setGeometry(screen()->geometry());
         host->showFullScreen();
     } else {
         fullscreen->hide();

@@ -27,6 +27,8 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
         QVERIFY(QTest::qWaitForWindowActive(&panel));
         QTRY_VERIFY_WITH_TIMEOUT(panel.Diagnostics()["frames"].toInt() > 10, 20000);
+        QTest::qWait(2500); // obtain an actual FPS/submit-time measurement
+        QVERIFY(panel.Diagnostics()["fps"].toDouble() > 5);
         QVERIFY(enabled);
         QVERIFY(!panel.Diagnostics()["failed"].toBool());
         auto checkSize = [&] {
@@ -51,6 +53,7 @@ private slots:
                 for (int x=0; x<image.width(); x+=2)
                     if ((image.pixel(x,y) & 0xffffff) != 0) { nonBlack=true; break; }
             QVERIFY(nonBlack);
+            QCOMPARE(panel.Diagnostics()["presetErrors"].toInt(), 0);
         }
         panel.SetFullscreen(true);
         QTRY_VERIFY(panel.Diagnostics()["fullscreen"].toBool());
@@ -64,6 +67,7 @@ private slots:
         QTest::qWait(500);
         QCOMPARE(panel.Diagnostics()["frames"].toInt(), stopped);
         panel.show();
+        panel.activateWindow();
         QTRY_VERIFY(panel.Diagnostics()["frames"].toInt() > stopped+5);
         QVERIFY(enabled);
         qInfo() << "MilkDrop verified diagnostics:" << panel.Diagnostics();

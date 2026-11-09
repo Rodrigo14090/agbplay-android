@@ -46,6 +46,7 @@ def record(name):
     assert abs(d["width"] - round(d["logicalWidth"] * d["dpr"])) <= 1, state
     assert abs(d["height"] - round(d["logicalHeight"] * d["dpr"])) <= 1, state
     assert d["viewportWidth"] == d["width"] and d["viewportHeight"] == d["height"], state
+    assert d["presetErrors"] == 0 and not d["failed"], state
     (bg.OUT / f"{name}.png").write_bytes(adb("exec-out", "screencap", "-p"))
     (bg.OUT / f"{name}-meminfo.txt").write_bytes(adb("shell", "dumpsys", "meminfo", PACKAGE))
     (bg.OUT / f"{name}-process-stat.txt").write_bytes(

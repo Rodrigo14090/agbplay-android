@@ -37,6 +37,7 @@ private:
     QElapsedTimer clock, measurement;
     qint64 deadline = 0, renderNs = 0, maxRenderNs = 0;
     quint64 frames = 0, intervalFrames = 0, skippedFrames = 0, pcmFrames = 0;
+    int contexts = 0, presetErrors = 0;
     int frameLimit = 0, targetFps = 60;
     QSize framebuffer;
     QSize viewport;

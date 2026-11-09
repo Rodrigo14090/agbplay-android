@@ -69,6 +69,7 @@ void MilkDropWindow::initializeGL()
                 << reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER))
                 << reinterpret_cast<const char *>(gl->glGetString(GL_VERSION));
         renderer.Create();
+        ++contexts;
         initialized = true;
         presetPending = true;
         connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MilkDropWindow::Cleanup, Qt::DirectConnection);
@@ -110,6 +111,7 @@ void MilkDropWindow::paintGL()
                     << "DPR:" << devicePixelRatio() << "FBO:" << defaultFramebufferObject();
         }
         if (auto error = renderer.TakeError(); !error.empty()) {
+            ++presetErrors;
             qWarning() << "MilkDrop preset:" << QString::fromStdString(error);
             emit statisticsChanged(QString::fromStdString(error));
         }
@@ -148,6 +150,7 @@ void MilkDropWindow::ScheduleFrame()
 QJsonObject MilkDropWindow::Diagnostics() const
 {
     return {{"frames", double(frames)}, {"pcmFrames", double(pcmFrames)}, {"skippedVisualFrames", double(skippedFrames)},
+        {"contexts", contexts}, {"presetErrors", presetErrors},
         {"running", running}, {"initialized", initialized}, {"failed", failed}, {"fps", actualFps},
         {"targetFps", targetFps}, {"width", framebuffer.width()}, {"height", framebuffer.height()},
         {"viewportWidth", viewport.width()}, {"viewportHeight", viewport.height()},
