@@ -71,7 +71,9 @@ def remove_fullscreen_task():
     adb("shell", "am", "start", "-W", "-n", ACTIVITY)
     bg.wait_for(lambda s: s["applicationState"] == 4)
     command("milkdrop")
-    command("milkdrop-full")
+    point = bg.state()["milkdrop"]["fullscreenButton"]
+    assert point["visible"]
+    adb("shell", "input", "tap", point["x"], point["y"])
     bg.wait_for(lambda s: s["milkdrop"]["fullscreen"] and s["requestedOrientation"] == 0)
     visual()
     command("dirty-profile")
@@ -130,7 +132,9 @@ def exercise(mode, size, width, height, density):
         bg.continuous(f"preset-{preset}", 3)
         record(f"preset-{preset}")
         command("milkdrop-next")
-    command("milkdrop-full")
+    point = bg.state()["milkdrop"]["fullscreenButton"]
+    assert point["visible"]
+    adb("shell", "input", "tap", point["x"], point["y"])
     bg.wait_for(lambda s: s["milkdrop"]["fullscreen"] and s["requestedOrientation"] == 0
                 and s["deviceOrientation"] == 2 and s["milkdrop"]["width"] > s["milkdrop"]["height"])
     visual()
@@ -144,7 +148,9 @@ def exercise(mode, size, width, height, density):
     adb("shell", "input", "keyevent", "KEYCODE_WAKEUP")
     adb("shell", "wm", "dismiss-keyguard")
     visual()
-    command("milkdrop-inline")
+    point = bg.state()["milkdrop"]["exitButton"]
+    assert point["visible"]
+    adb("shell", "input", "tap", point["x"], point["y"])
     bg.wait_for(lambda s: not s["milkdrop"]["fullscreen"]
                 and s["requestedOrientation"] == original["requestedOrientation"]
                 and s["deviceOrientation"] == original["deviceOrientation"])
@@ -168,6 +174,9 @@ def exercise(mode, size, width, height, density):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    # Dismiss Android's one-time immersive-mode education in this emulator.
+    # Otherwise it covers the renderer and intercepts the exit-button tap.
+    adb("shell", "settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
     adb("install", "-r", ROOT / "build-android-ui/artifacts/background-probe-x86_64.apk")
     try:
         for size, width, height, density in (("phone", 576, 1280, 240), ("tablet", 2560, 1600, 240)):

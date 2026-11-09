@@ -9,6 +9,7 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QStandardPaths>
 #include <QDir>
 #include <QSaveFile>
@@ -94,7 +95,11 @@ QWidget *MilkDropPanel::MakeControls(bool full)
     selector->setMinimumWidth(70);
     selectors.append(selector);
     connect(selector, &QObject::destroyed, this, [this, selector] { selectors.removeAll(selector); });
-    auto *toggle = new QPushButton(full ? "Salir" : "⛶", row);
+    auto *toggle = new QPushButton(full ? "Salir" : "", row);
+    if (!full) {
+        const auto icon = style()->standardIcon(QStyle::SP_TitleBarMaxButton);
+        if (icon.isNull()) toggle->setText("Full"); else toggle->setIcon(icon);
+    }
     toggle->setAccessibleName(full ? "Salir de pantalla completa" : "Pantalla completa");
     toggle->setToolTip(toggle->accessibleName());
     toggle->setObjectName(full ? "milkDropExitFullscreen" : "milkDropFullscreen");

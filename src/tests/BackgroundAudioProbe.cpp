@@ -177,6 +177,14 @@ public:
                 result["exposed"] = window.windowHandle() && window.windowHandle()->isExposed();
                 result["inputFocus"] = qApp->focusWindow() == window.windowHandle();
                 result["open"] = describe(window.findChild<QWidget *>("openRomButton"));
+#ifdef AGBPLAY_PROJECTM
+                auto milkdrop = result["milkdrop"].toObject();
+                milkdrop["fullscreenButton"] = describe(window.milkDrop->findChild<QWidget *>("milkDropFullscreen"));
+                for (auto *top : QApplication::topLevelWidgets())
+                    if (top->objectName() == "milkDropPresentation" && top->isVisible())
+                        milkdrop["exitButton"] = describe(top->findChild<QWidget *>("milkDropExitFullscreen"));
+                result["milkdrop"] = milkdrop;
+#endif
                 result["menu"] = describe(window.findChild<QWidget *>("touchMenuButton"));
                 const auto *modal = QApplication::activeModalWidget();
                 result["dialog"] = modal && modal->isVisible() ? modal->windowTitle() : QString{};
