@@ -172,7 +172,11 @@ void MilkDropWindow::paintGL()
         }
         if (presetPending) { renderer.Load(preset.toStdString()); presetPending = false; }
         if (selectedFile >= 0) { renderer.Select(unsigned(selectedFile)); selectedFile = -1; }
-        if (navigation) { renderer.Next(navigation < 0); navigation = 0; }
+        if (navigation) { renderer.Next(navigation < 0); navigation = 0; retryPresetAt = 0; }
+        if (retryPresetAt && clock.nsecsElapsed() >= retryPresetAt) {
+            retryPresetAt = 0;
+            renderer.Next(false);
+        }
         std::array<float, VisualizationPcmTap::Frames * 2> pcm{};
         const auto result = readPcm ? readPcm(pcm) : VisualizationPcmTap::Result{};
         pcmFrames += result.frames;
@@ -193,6 +197,9 @@ void MilkDropWindow::paintGL()
         }
         if (auto error = renderer.TakeError(); !error.empty()) {
             ++presetErrors;
+            // After projectM exhausts its bounded retries, try again later;
+            // otherwise one group of broken shaders can stop rotation forever.
+            if (!paths.isEmpty()) retryPresetAt = clock.nsecsElapsed() + 2000000000LL;
             qWarning() << "MilkDrop preset:" << QString::fromStdString(error);
             emit statisticsChanged(QString::fromStdString(error));
         }
