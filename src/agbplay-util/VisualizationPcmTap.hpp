@@ -27,7 +27,7 @@ public:
         if (!(epoch & 1U)) { pending = 0; writerEpoch = 0; return; }
         if (writerEpoch != epoch) { pending = 0; writerEpoch = epoch; }
         while (stereo.size() >= 2) {
-            auto &slot = slots[back];
+            auto &slot = buffers[back];
             const size_t count = std::min(Frames - pending, stereo.size() / 2);
             std::copy_n(stereo.data(), count * 2, slot.pcm.data() + pending * 2);
             pending += count;
@@ -44,7 +44,7 @@ public:
     Result Read(std::span<float> stereo) noexcept {
         if (stereo.size() < Frames * 2 || !(middle.load(std::memory_order_acquire) & Dirty)) return {};
         front = middle.exchange(front, std::memory_order_acq_rel) & Mask;
-        const auto &slot = slots[front];
+        const auto &slot = buffers[front];
         const auto epoch = control.load(std::memory_order_acquire);
         if (!(epoch & 1U) || slot.epoch != epoch) return {};
         const auto skipped = readEpoch == epoch && slot.sequence > lastRead ? slot.sequence - lastRead - 1 : 0;
@@ -57,7 +57,7 @@ public:
 private:
     static constexpr unsigned Dirty = 4, Mask = 3;
     struct Slot { std::array<float, Frames * 2> pcm{}; unsigned epoch = 0; uint64_t sequence = 0; };
-    std::array<Slot, 3> slots{};
+    std::array<Slot, 3> buffers{};
     alignas(64) std::atomic<unsigned> middle{1};
     alignas(64) std::atomic<unsigned> control{0};
     unsigned back = 2, writerEpoch = 0;

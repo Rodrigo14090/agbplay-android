@@ -1,4 +1,7 @@
 #include "MainWindow.hpp"
+#ifdef AGBPLAY_PROJECTM
+#include "MilkDropPanel.hpp"
+#endif
 #include "AndroidPlayback.hpp"
 #include "DocumentAccess.hpp"
 #include "TouchPlayerLayout.hpp"
@@ -57,6 +60,15 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
         menuBar()->setNativeMenuBar(false);
     SetupMenuBar();
     SetupToolBar();
+#ifdef AGBPLAY_PROJECTM
+    milkDrop = std::make_unique<MilkDropPanel>(this);
+    milkDrop->SetSource([this](std::span<float> pcm) {
+        return playbackEngine ? playbackEngine->ReadVisualizationPcm(pcm) : VisualizationPcmTap::Result{};
+    }, [this](bool enabled) {
+        visualizationEnabled = enabled;
+        if (playbackEngine) playbackEngine->EnableVisualization(enabled);
+    });
+#endif
     SetupWidgets();
     SetupStatusBar();
     if (touchInterface)
@@ -131,6 +143,9 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
 
 MainWindow::~MainWindow()
 {
+#ifdef AGBPLAY_PROJECTM
+    milkDrop.reset(); // detach the PCM reader and GL context before the player
+#endif
 #ifdef Q_OS_ANDROID
     androidPlayback.reset(); // detach JNI before native player/UI destruction
 #endif
@@ -289,6 +304,24 @@ void MainWindow::SetupMenuBar()
         w.exec();
     });
     helpAboutAction->setMenuRole(QAction::AboutRole);
+#ifdef AGBPLAY_PROJECTM
+    auto *licenses = helpMenu->addAction("Licencias de MilkDrop / projectM");
+    connect(licenses, &QAction::triggered, this, [this] {
+        QDialog dialog(this);
+        dialog.setWindowTitle("MilkDrop / projectM — licencias");
+        QVBoxLayout layout(&dialog);
+        QTextEdit text(&dialog); text.setReadOnly(true);
+        QString content;
+        for (const auto *name : {"NOTICE.txt", "LGPL-2.1.txt", "projectm-eval-MIT.txt", "hlslparser-MIT.txt", "glm-copying.txt", "Apache-2.0.txt"}) {
+            QFile file(QString(":/milkdrop/licenses/%1").arg(name));
+            if (file.open(QIODevice::ReadOnly)) content += QString::fromUtf8(file.readAll()) + "\n\n";
+        }
+        text.setPlainText(content); layout.addWidget(&text);
+        QDialogButtonBox buttons(QDialogButtonBox::Close, &dialog); layout.addWidget(&buttons);
+        connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        dialog.resize(640, 480); dialog.exec();
+    });
+#endif
 }
 
 void MainWindow::SetupToolBar()
@@ -405,7 +438,15 @@ void MainWindow::SetupWidgets()
     containerStatusInfoLayout.addWidget(&containerStatusInfoSplitter);
     containerStatusInfoLayout.setContentsMargins(0, 0, 0, 0);
     containerStatusInfoSplitter.setChildrenCollapsible(false);
+#ifdef AGBPLAY_PROJECTM
+    auto *visualTabs = new QTabWidget(&containerStatusInfo);
+    visualTabs->setObjectName("visualizationTabs");
+    visualTabs->addTab(&statusWidgetScrollArea, "Pistas");
+    visualTabs->addTab(milkDrop.get(), "MilkDrop");
+    containerStatusInfoSplitter.addWidget(visualTabs);
+#else
     containerStatusInfoSplitter.addWidget(&statusWidgetScrollArea);
+#endif
     containerStatusInfoSplitter.addWidget(&infoWidget);
     containerStatusInfoSplitter.setStretchFactor(0, 5);
     containerStatusInfoSplitter.setStretchFactor(1, 1);
@@ -540,7 +581,11 @@ void MainWindow::SetupTouchInterface()
     auto *oldCentral = takeCentralWidget();
     oldCentral->setParent(this);
     oldCentral->hide();
-    auto *touch = new TouchPlayerLayout({&songlistWidget, &playlistWidget, tracksPage, infoScroll, &logWidget}, controls, this);
+    std::vector<QWidget *> pages{&songlistWidget, &playlistWidget, tracksPage, infoScroll, &logWidget};
+#ifdef AGBPLAY_PROJECTM
+    pages.push_back(milkDrop.get());
+#endif
+    auto *touch = new TouchPlayerLayout(pages, controls, this);
     setCentralWidget(touch);
     statusBar()->setSizeGripEnabled(false);
 }
@@ -1272,6 +1317,9 @@ void MainWindow::OpenDocuments(const std::vector<std::filesystem::path> &paths,
     try {
         playbackEngine = std::make_unique<PlaybackEngine>(settings->playbackSampleRate, ConvertSliderVolume(settings->playbackVolume), *profile,
             AudioBufferPolicy::DefaultReserveMs, settings->androidAudioOutputMode);
+#ifdef AGBPLAY_PROJECTM
+        playbackEngine->EnableVisualization(visualizationEnabled);
+#endif
     } catch (const std::exception &e) {
         MBoxError("Audio initialization", e.what());
         CloseGame();

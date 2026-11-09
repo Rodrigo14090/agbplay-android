@@ -27,6 +27,9 @@ namespace DocumentAccess { struct FolderDocument; }
 #include <QTimer>
 
 class PlaybackEngine;
+#ifdef AGBPLAY_PROJECTM
+class MilkDropPanel;
+#endif
 class AndroidPlayback;
 class ProfileManager;
 struct Settings;
@@ -185,6 +188,10 @@ private:
     std::unique_ptr<Settings> settings;
     std::shared_ptr<Profile> profile;
     std::unique_ptr<PlaybackEngine> playbackEngine;
+#ifdef AGBPLAY_PROJECTM
+    std::unique_ptr<MilkDropPanel> milkDrop;
+    bool visualizationEnabled = false;
+#endif
     std::unique_ptr<MP2KVisualizerState> visualizerState;
 
     bool playing = false;
