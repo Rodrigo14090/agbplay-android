@@ -73,6 +73,20 @@ MainWindow::MainWindow(QWidget *parent, bool touchInterface) : QMainWindow(paren
     SetupStatusBar();
     if (touchInterface)
         SetupTouchInterface();
+#ifdef AGBPLAY_PROJECTM
+    else {
+        // The touch layout moves the original track view directly. Do not
+        // first hide it in a desktop tab stack: that explicit hidden state
+        // would survive reparenting into the phone's Pistas page.
+        auto *visualTabs = new QTabWidget(&containerStatusInfo);
+        visualTabs->setObjectName("visualizationTabs");
+        visualTabs->addTab(&statusWidgetScrollArea, "Pistas");
+        visualTabs->addTab(milkDrop.get(), "MilkDrop");
+        containerStatusInfoSplitter.insertWidget(0, visualTabs);
+        containerStatusInfoSplitter.setStretchFactor(0, 5);
+        containerStatusInfoSplitter.setStretchFactor(1, 1);
+    }
+#endif
 #ifdef Q_OS_ANDROID
     connect(qApp, &QGuiApplication::applicationStateChanged, this, &MainWindow::HandleApplicationState);
 #endif
@@ -438,15 +452,7 @@ void MainWindow::SetupWidgets()
     containerStatusInfoLayout.addWidget(&containerStatusInfoSplitter);
     containerStatusInfoLayout.setContentsMargins(0, 0, 0, 0);
     containerStatusInfoSplitter.setChildrenCollapsible(false);
-#ifdef AGBPLAY_PROJECTM
-    auto *visualTabs = new QTabWidget(&containerStatusInfo);
-    visualTabs->setObjectName("visualizationTabs");
-    visualTabs->addTab(&statusWidgetScrollArea, "Pistas");
-    visualTabs->addTab(milkDrop.get(), "MilkDrop");
-    containerStatusInfoSplitter.addWidget(visualTabs);
-#else
     containerStatusInfoSplitter.addWidget(&statusWidgetScrollArea);
-#endif
     containerStatusInfoSplitter.addWidget(&infoWidget);
     containerStatusInfoSplitter.setStretchFactor(0, 5);
     containerStatusInfoSplitter.setStretchFactor(1, 1);
