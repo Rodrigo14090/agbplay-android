@@ -27,6 +27,24 @@ private slots:
         QTRY_VERIFY(delivered);
         QVERIFY(!panel.Diagnostics()["running"].toBool());
     }
+    void externalTexturePreset()
+    {
+        const auto preset = qEnvironmentVariable("AGBPLAY_TEST_TEXTURE_PRESET");
+        const auto textures = qEnvironmentVariable("AGBPLAY_TEST_TEXTURE_DIR");
+        if (preset.isEmpty() || textures.isEmpty()) QSKIP("Official texture integration test is opt-in");
+        QWidget host;
+        auto *window = new MilkDropWindow;
+        auto *container = QWidget::createWindowContainer(window, &host);
+        QVBoxLayout layout(&host); layout.addWidget(container);
+        host.resize(320, 240);
+        window->SetFiles({preset}, textures);
+        window->SetEnabled(true);
+        host.show(); host.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&host));
+        QTRY_VERIFY_WITH_TIMEOUT(window->Diagnostics()["frames"].toInt() > 5, 20000);
+        QCOMPARE(window->Diagnostics()["presetErrors"].toInt(), 0);
+        QVERIFY(!window->grabFramebuffer().isNull());
+    }
     void nativeRenderingAndLifecycle()
     {
         MilkDropPanel panel;
