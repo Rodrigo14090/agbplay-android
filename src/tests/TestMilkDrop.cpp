@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QTest>
+#include <QDir>
 #include <cmath>
 
 class TestMilkDrop : public QObject
@@ -53,6 +54,11 @@ private slots:
                 for (int x=0; x<image.width(); x+=2)
                     if ((image.pixel(x,y) & 0xffffff) != 0) { nonBlack=true; break; }
             QVERIFY(nonBlack);
+            const auto captures = qEnvironmentVariable("AGBPLAY_MILKDROP_CAPTURE_DIR");
+            if (!captures.isEmpty()) {
+                QDir().mkpath(captures);
+                QVERIFY(image.save(captures + QString("/preset-%1.png").arg(preset)));
+            }
             QCOMPARE(panel.Diagnostics()["presetErrors"].toInt(), 0);
         }
         panel.SetFullscreen(true);

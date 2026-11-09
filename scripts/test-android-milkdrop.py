@@ -113,7 +113,7 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     adb("install", "-r", ROOT / "build-android-ui/artifacts/background-probe-x86_64.apk")
     try:
-        for size, width, height, density in (("phone", 576, 1280, 240), ("tablet", 1600, 1200, 160)):
+        for size, width, height, density in (("phone", 576, 1280, 240), ("tablet", 2560, 1600, 240)):
             for mode in ("qt", "audiotrack"):
                 exercise(mode, size, width, height, density)
     finally:

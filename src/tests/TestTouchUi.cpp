@@ -623,7 +623,11 @@ private slots:
         settle();
         auto *scroll = tabs->widget(2)->findChild<QScrollArea *>();
         QVERIFY(scroll);
-        QVERIFY(scroll->widget()->width() <= scroll->viewport()->width());
+        QVERIFY(scroll->isVisible());
+        QVERIFY2(scroll->widget()->width() <= scroll->viewport()->width(), qPrintable(
+            QString("track contents=%1 viewport=%2 minimum=%3 hint=%4")
+                .arg(scroll->widget()->width()).arg(scroll->viewport()->width())
+                .arg(scroll->widget()->minimumWidth()).arg(scroll->widget()->minimumSizeHint().width())));
         for (auto *button : track->findChildren<QPushButton *>()) {
             QVERIFY(button->isVisible());
             QVERIFY(track->rect().contains(QRect(button->mapTo(track, QPoint{}), button->size())));

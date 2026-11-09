@@ -156,7 +156,7 @@ public:
                 result["lastCommand"] = lastCommand;
 #ifdef AGBPLAY_PROJECTM
                 result["milkdrop"] = window.milkDrop->Diagnostics();
-                const auto activity = QNativeInterface::QAndroidApplication::context();
+                const QJniObject activity(QNativeInterface::QAndroidApplication::context().object());
                 result["requestedOrientation"] = activity.callMethod<jint>("getRequestedOrientation", "()I");
                 const auto resources = activity.callObjectMethod("getResources", "()Landroid/content/res/Resources;");
                 const auto configuration = resources.callObjectMethod("getConfiguration", "()Landroid/content/res/Configuration;");

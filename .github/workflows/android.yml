@@ -13,15 +13,21 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libboost-dev libfmt-dev nlohmann-json3-dev libzip-dev libsndfile1-dev zlib1g-dev portaudio19-dev libportaudiocpp0 qt6-base-dev libqt6opengl6-dev libgl1-mesa-dev libx11-dev xvfb xauth
       - name: Build and test projectM with real OpenGL
+        env:
+          AGBPLAY_MILKDROP_CAPTURE_DIR: ${{ runner.temp }}/milkdrop-captures
         run: |
           cmake -S . -B build-milkdrop -G Ninja -DCMAKE_BUILD_TYPE=Release -DAGBPLAY_PROJECTM=ON -DAGBPLAY_BUILD_CLI=OFF -DAGBPLAY_BUILD_NC=OFF -DAGBPLAY_ENABLE_AVX2=OFF
           cmake --build build-milkdrop --parallel 3
           xvfb-run -a -s '-screen 0 1280x720x24' ctest --test-dir build-milkdrop -R '^milkdrop$' --output-on-failure
+          xvfb-run -a -s '-screen 0 1280x720x24' env QT_SCALE_FACTOR=2 ./build-milkdrop/src/agbplay-gui/test-milkdrop
+          ctest --test-dir build-milkdrop -E '^milkdrop$' --output-on-failure
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: milkdrop-host-results
-          path: build-milkdrop/Testing/Temporary/LastTest.log
+          path: |
+            build-milkdrop/Testing/Temporary/LastTest.log
+            ${{ runner.temp }}/milkdrop-captures/*.png
   host:
     runs-on: ubuntu-24.04
     strategy:
