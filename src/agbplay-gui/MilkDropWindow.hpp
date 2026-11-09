@@ -23,6 +23,8 @@ signals:
     void runningChanged(bool running);
     void statisticsChanged(const QString &text);
 protected:
+    bool event(QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
     void initializeGL() override;
     void paintGL() override;
     void exposeEvent(QExposeEvent *event) override;
@@ -30,6 +32,7 @@ private:
     void UpdateRunning();
     void ScheduleFrame();
     void Cleanup();
+    bool EnsureContext();
     ProjectMRenderer renderer;
     Source readPcm;
     QByteArray preset;
@@ -43,4 +46,5 @@ private:
     QSize viewport;
     double actualFps = 0;
     bool enabled = false, running = false, initialized = false, failed = false, presetPending = false;
+    bool nativeSizeQueried = false;
 };

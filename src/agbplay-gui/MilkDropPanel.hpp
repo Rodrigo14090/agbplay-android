@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QComboBox>
+#include <QPointer>
 #include <memory>
 
 class MilkDropPanel : public QWidget
@@ -13,6 +14,7 @@ public:
     ~MilkDropPanel() override;
     void SetSource(MilkDropWindow::Source source, std::function<void(bool)> enable);
     void SetFullscreen(bool value);
+    void PrepareForShutdown();
     bool IsFullscreen() const { return fullscreen != nullptr; }
     QJsonObject Diagnostics() const;
     void SelectPreset(int index);
@@ -28,10 +30,14 @@ private:
     MilkDropWindow *surface;
     QWidget *viewport;
     std::unique_ptr<QWidget> fullscreen;
+    QList<QPointer<QWidget>> retiredPresentations;
+    QPointer<QWidget> previousWindow;
+    bool previousVisible = false;
     QVBoxLayout *fullscreenLayout = nullptr;
     std::function<void(bool)> enablePcm;
     QList<QByteArray> presets;
     QStringList names;
     QList<QComboBox *> selectors;
     int selected = 0;
+    bool closing = false;
 };

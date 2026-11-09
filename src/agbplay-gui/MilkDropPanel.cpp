@@ -24,7 +24,7 @@ namespace {
 class PresentationWindow : public QWidget {
 public:
     std::function<void()> leave;
-    void closeEvent(QCloseEvent *event) override { event->ignore(); if (leave) leave(); }
+    void closeEvent(QCloseEvent *event) override { event->accept(); if (leave) leave(); }
 };
 }
 MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new MilkDropWindow),
@@ -58,14 +58,21 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
 }
 MilkDropPanel::~MilkDropPanel()
 {
+    PrepareForShutdown();
+    // Deferred deletes may not run after QApplication::exec() has returned.
+    for (const auto &retired : retiredPresentations) if (retired) delete retired.data();
+    for (auto *selector : selectors) disconnect(selector, nullptr, this, nullptr);
+    delete viewport;
+}
+void MilkDropPanel::PrepareForShutdown()
+{
+    if (closing) return;
+    closing = true;
     surface->SetEnabled(false);
     surface->SetSource({});
     if (enablePcm) enablePcm(false);
     enablePcm = {};
     SetFullscreen(false);
-    for (auto *selector : selectors) disconnect(selector, nullptr, this, nullptr);
-    // Delete the native GL window while its derived cleanup/context still exist.
-    delete viewport;
 }
 void MilkDropPanel::SetSource(MilkDropWindow::Source source, std::function<void(bool)> enable)
 {
@@ -146,9 +153,12 @@ void MilkDropPanel::SetOrientation(bool landscape)
 }
 void MilkDropPanel::SetFullscreen(bool value)
 {
+    if (closing && value) return;
     if (value == bool(fullscreen)) return;
     surface->SetEnabled(false);
     if (value) {
+        previousWindow = window();
+        previousVisible = previousWindow->isVisible();
         auto *host = new PresentationWindow;
         fullscreen.reset(host);
         host->setObjectName("milkDropPresentation");
@@ -165,22 +175,29 @@ void MilkDropPanel::SetFullscreen(bool value)
         // fullscreen state hint. Android resizes again when landscape arrives.
         host->setGeometry(screen()->geometry());
         host->showFullScreen();
+        // Keep one QWidget backing-store window exposed. Leaving the original
+        // window painting behind the presentation wastes GPU and can race its
+        // Android surface teardown when the screen is switched off.
+        if (previousVisible) previousWindow->hide();
     } else {
+        if (!closing && previousVisible && previousWindow) previousWindow->show();
         fullscreen->hide();
         fullscreenLayout->removeWidget(viewport);
         viewport->setParent(this);
         layout.insertWidget(0, viewport, 1);
         viewport->show();
         // Avoid deleting a QWidget while its close/key event is on the stack.
-        fullscreen.release()->deleteLater();
+        auto *retired = fullscreen.release();
+        retiredPresentations.removeIf([](const auto &entry) { return entry.isNull(); });
+        retiredPresentations.append(retired);
+        retired->deleteLater();
         fullscreenLayout = nullptr;
         SetOrientation(false);
-        window()->raise();
-        window()->activateWindow();
+        if (!closing) { window()->raise(); window()->activateWindow(); }
     }
     UpdateEnabled();
 }
-void MilkDropPanel::UpdateEnabled() { surface->SetEnabled(isVisible() || bool(fullscreen)); }
+void MilkDropPanel::UpdateEnabled() { surface->SetEnabled(!closing && (isVisible() || bool(fullscreen))); }
 void MilkDropPanel::showEvent(QShowEvent *event) { QWidget::showEvent(event); UpdateEnabled(); }
 void MilkDropPanel::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); UpdateEnabled(); }
 QJsonObject MilkDropPanel::Diagnostics() const

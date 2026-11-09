@@ -936,6 +936,9 @@ void MainWindow::PrepareForShutdown()
 {
     if (shuttingDown) return;
     shuttingDown = true;
+#ifdef AGBPLAY_PROJECTM
+    if (milkDrop) milkDrop->PrepareForShutdown();
+#endif
     statusUpdateTimer.stop();
     deferredUiTasks.clear();
     if (importCancelled) importCancelled->store(true);

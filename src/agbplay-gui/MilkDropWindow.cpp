@@ -4,10 +4,14 @@
 #include <QOpenGLFunctions>
 #include <QSurfaceFormat>
 #include <QDebug>
+#include <QResizeEvent>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
+#ifdef Q_OS_ANDROID
+#include <EGL/egl.h>
+#endif
 
 MilkDropWindow::MilkDropWindow() : QOpenGLWindow(NoPartialUpdate)
 {
@@ -57,12 +61,39 @@ void MilkDropWindow::UpdateRunning()
 }
 void MilkDropWindow::exposeEvent(QExposeEvent *event)
 {
-    QOpenGLWindow::exposeEvent(event);
     UpdateRunning();
+    if (running && EnsureContext()) QOpenGLWindow::exposeEvent(event);
+}
+void MilkDropWindow::resizeEvent(QResizeEvent *)
+{
+    // QOpenGLWindow's default resize handler eagerly initializes GL, even for
+    // hidden tab pages. Defer it until an exposed frame; paintGL sizes projectM.
+    if (running) update();
+}
+bool MilkDropWindow::EnsureContext()
+{
+    if (!initialized && !failed) {
+        // This protected Qt handler initializes the actual window context
+        // without beginPaint's unconditional GL calls. Reject a failed context
+        // before Qt's painter can dereference its unavailable function table.
+        QResizeEvent initial(size(), size());
+        QOpenGLWindow::resizeEvent(&initial);
+    }
+    return initialized && !failed && context() && context()->isValid();
+}
+bool MilkDropWindow::event(QEvent *event)
+{
+    if (event->type() == QEvent::UpdateRequest && (!running || !EnsureContext())) return true;
+    return QOpenGLWindow::event(event);
 }
 void MilkDropWindow::initializeGL()
 {
     try {
+        if (!context() || !context()->isValid() || QOpenGLContext::currentContext() != context())
+            throw std::runtime_error("MilkDrop: no usable OpenGL context; audio remains available");
+        const auto actual = context()->format();
+        if (actual.majorVersion() < 3 || (!context()->isOpenGLES() && actual.majorVersion() == 3 && actual.minorVersion() < 3))
+            throw std::runtime_error("MilkDrop requires GLES 3.0 / OpenGL 3.3");
         if (defaultFramebufferObject() != 0) throw std::runtime_error("projectM requires a window framebuffer");
         auto *gl = context()->functions();
         qInfo() << "MilkDrop projectM 4.1.8:" << reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR))
@@ -87,13 +118,25 @@ void MilkDropWindow::Cleanup()
     renderer.Destroy();
     doneCurrent();
     initialized = false;
+    disconnect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MilkDropWindow::Cleanup);
 }
 void MilkDropWindow::paintGL()
 {
     if (!initialized || !running) return;
     QElapsedTimer work; work.start();
     try {
-        const QSize nextSize{qRound(width() * devicePixelRatio()), qRound(height() * devicePixelRatio())};
+        QSize nextSize{qRound(width() * devicePixelRatio()), qRound(height() * devicePixelRatio())};
+#ifdef Q_OS_ANDROID
+        EGLint nativeWidth = 0, nativeHeight = 0;
+        const auto display = eglGetCurrentDisplay();
+        const auto draw = eglGetCurrentSurface(EGL_DRAW);
+        if (display != EGL_NO_DISPLAY && draw != EGL_NO_SURFACE &&
+            eglQuerySurface(display, draw, EGL_WIDTH, &nativeWidth) &&
+            eglQuerySurface(display, draw, EGL_HEIGHT, &nativeHeight) && nativeWidth > 0 && nativeHeight > 0) {
+            nextSize = {nativeWidth, nativeHeight};
+            nativeSizeQueried = true;
+        }
+#endif
         const bool resized = framebuffer != nextSize;
         framebuffer = nextSize;
         if (presetPending) { renderer.Load(preset.toStdString()); presetPending = false; }
@@ -151,6 +194,7 @@ QJsonObject MilkDropWindow::Diagnostics() const
 {
     return {{"frames", double(frames)}, {"pcmFrames", double(pcmFrames)}, {"skippedVisualFrames", double(skippedFrames)},
         {"contexts", contexts}, {"presetErrors", presetErrors},
+        {"eglSurfaceSize", nativeSizeQueried},
         {"running", running}, {"initialized", initialized}, {"failed", failed}, {"fps", actualFps},
         {"targetFps", targetFps}, {"width", framebuffer.width()}, {"height", framebuffer.height()},
         {"viewportWidth", viewport.width()}, {"viewportHeight", viewport.height()},
