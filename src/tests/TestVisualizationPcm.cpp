@@ -1,4 +1,5 @@
 #include "VisualizationPcmTap.hpp"
+#include "../visualization/FrameCadence.hpp"
 #include <atomic>
 #include <iostream>
 #include <stdexcept>
@@ -9,6 +10,21 @@
 
 int main()
 {
+    // Model a fast GPU and an overloaded software GPU for 300 submissions.
+    // Even below 1 FPS the heavy case must yield, rather than running forever
+    // at 100% of the submission thread while trying to catch up to a timer.
+    for (const int64_t work : {2000000LL, 140000000LL, 2000000000LL}) {
+        int64_t deadline = 0, now = 0, idle = 0;
+        for (int n=0; n<300; ++n) {
+            now += work;
+            const auto next = FrameCadence::NextDeadline(deadline, now, 60, work);
+            idle += next - now; deadline = now = next;
+        }
+        CHECK(idle >= 300 * work);
+        if (work == 2000000) CHECK(now >= 4900000000LL && now <= 5100000000LL); // retain ~60 FPS
+    }
+    CHECK(FrameCadence::LowerRate(15) == 10 && FrameCadence::LowerRate(5) == 2);
+    CHECK(FrameCadence::LowerRate(2) == 1 && FrameCadence::LowerRate(1) == 1);
     VisualizationPcmTap tap;
     std::array<float, 1024> pcm{};
     tap.Publish(pcm);

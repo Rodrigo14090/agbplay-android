@@ -1,4 +1,5 @@
 #include "MilkDropWindow.hpp"
+#include "FrameCadence.hpp"
 #include <QGuiApplication>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
@@ -54,6 +55,7 @@ void MilkDropWindow::UpdateRunning()
     if (running == value) return;
     running = value;
     deadline = 0;
+    lastSubmitNs = 0;
     intervalFrames = 0; renderNs = maxRenderNs = 0;
     measurement.restart();
     nextFrame.stop();
@@ -177,12 +179,13 @@ void MilkDropWindow::paintGL()
     }
     ++frames; ++intervalFrames;
     const auto elapsed = work.nsecsElapsed();
+    lastSubmitNs = elapsed;
     renderNs += elapsed; maxRenderNs = std::max(maxRenderNs, elapsed);
     if (measurement.elapsed() >= 2000) {
         actualFps = double(intervalFrames) * 1e9 / double(measurement.nsecsElapsed());
         const double averageMs = double(renderNs) / double(intervalFrames) / 1e6;
         if (!frameLimit && (actualFps < targetFps * 0.7 || averageMs > 1000.0 / targetFps * 0.85))
-            targetFps = targetFps > 30 ? 30 : targetFps > 20 ? 20 : 15;
+            targetFps = FrameCadence::LowerRate(targetFps);
         const auto text = QString("%1×%2 · %3 FPS / %4 · CPU submit %5 ms · visual drop %6")
             .arg(framebuffer.width()).arg(framebuffer.height()).arg(actualFps, 0, 'f', 1)
             .arg(targetFps).arg(averageMs, 0, 'f', 1).arg(skippedFrames);
@@ -195,9 +198,7 @@ void MilkDropWindow::ScheduleFrame()
 {
     if (!running) return;
     const auto now = clock.nsecsElapsed();
-    const qint64 period = 1000000000LL / targetFps;
-    deadline = deadline ? deadline + period : now;
-    if (deadline < now - period) deadline = now; // never render a catch-up burst
+    deadline = FrameCadence::NextDeadline(deadline, now, targetFps, lastSubmitNs);
     nextFrame.start(static_cast<int>(std::max<qint64>(0, (deadline - now + 999999) / 1000000)));
 }
 QJsonObject MilkDropWindow::Diagnostics() const

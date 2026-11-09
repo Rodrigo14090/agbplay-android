@@ -26,7 +26,10 @@ GL. No se reduce resolución ni se añade MSAA/profundidad/stencil innecesarios.
 Se solicita swap interval 1; frameSwapped y un único timer
 preciso marcan los próximos fotogramas, sin ráfagas para recuperar retrasos.
 Objetivo inicial 60 FPS. Cada dos segundos, el modo automático puede bajar a
-30/20/15 si el rendimiento o tiempo de envío GL no sostiene el objetivo. Nunca
+30/20/15/10/5/2/1 si el rendimiento o tiempo de envío GL no sostiene el objetivo.
+Cada envío deja además un descanso al menos igual al tiempo de trabajo GL;
+incluso un preset inferior al mínimo de FPS no genera una ráfaga continua de
+render que sature el hilo. Ese presupuesto se adapta por fotograma. Nunca
 cambia resolución, síntesis, prioridades de audio ni parámetros del FIFO. El
 mesh de ecuaciones visuales se fija en 32×24; no es el remuestreador de audio.
 
