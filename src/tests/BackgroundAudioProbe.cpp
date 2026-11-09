@@ -1,5 +1,8 @@
 // Emulator-only end-to-end probe: real MainWindow, service, synthesis and QAudioSink.
 #include "MainWindow.hpp"
+#ifdef AGBPLAY_PROJECTM
+#include "MilkDropPanel.hpp"
+#endif
 #include "PlaybackEngine.hpp"
 #include "Debug.hpp"
 #include "SyntheticGsf.hpp"
@@ -22,6 +25,7 @@
 #include <QMenu>
 #include <QWindow>
 #include <QToolButton>
+#include <QTabWidget>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <fstream>
@@ -88,6 +92,16 @@ public:
                     const auto value = command.readAll().trimmed(); command.close(); command.remove();
                     lastCommand = QString::fromUtf8(value);
                     if (value == "restart") { window.Stop(); window.Play(); }
+#ifdef AGBPLAY_PROJECTM
+                    else if (value == "milkdrop") {
+                        for (auto *tabs : window.findChildren<QTabWidget *>())
+                            if (tabs->isVisible() && tabs->indexOf(window.milkDrop.get()) >= 0)
+                                tabs->setCurrentWidget(window.milkDrop.get());
+                    }
+                    else if (value == "milkdrop-full") window.milkDrop->SetFullscreen(true);
+                    else if (value == "milkdrop-inline") window.milkDrop->SetFullscreen(false);
+                    else if (value == "milkdrop-next") window.milkDrop->SelectPreset(window.milkDrop->Diagnostics()["preset"].toInt() + 1);
+#endif
                     else if (value == "expire-service")
                         QJniObject::callStaticMethod<void>("org/agbplay/android/LifecycleProbe", "expirePausedService", "()V");
                     else if (value == "stale-service-callbacks")
@@ -140,6 +154,14 @@ public:
                 QJsonObject result = state;
                 result["uiTaskRuns"] = uiTaskRuns;
                 result["lastCommand"] = lastCommand;
+#ifdef AGBPLAY_PROJECTM
+                result["milkdrop"] = window.milkDrop->Diagnostics();
+                const auto activity = QNativeInterface::QAndroidApplication::context();
+                result["requestedOrientation"] = activity.callMethod<jint>("getRequestedOrientation", "()I");
+                const auto resources = activity.callObjectMethod("getResources", "()Landroid/content/res/Resources;");
+                const auto configuration = resources.callObjectMethod("getConfiguration", "()Landroid/content/res/Configuration;");
+                result["deviceOrientation"] = configuration.getField<jint>("orientation");
+#endif
                 result["diagnosticWav"] = wavActive; result["gsf"] = gsfActive;
                 result["backend"] = window.playbackEngine && window.playbackEngine->OutputMode() == AudioOutputMode::MediaCompatibility ? "audiotrack" : "qt";
                 const auto play = window.playButton.mapToGlobal(window.playButton.rect().center());
