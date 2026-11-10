@@ -17,6 +17,7 @@ public final class MilkDropOrientation {
     private static int previousBehavior;
     private static int previousVisibleTypes;
     private MilkDropOrientation() { }
+    public static boolean isPresenting() { return owner.get() != null; }
     /** Called by Activity on Android's main thread, including system back gestures. */
     public static boolean consumeBack() {
         if (owner.get() == null) return false;
