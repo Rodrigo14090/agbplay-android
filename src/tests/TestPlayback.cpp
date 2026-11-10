@@ -19,6 +19,7 @@ AudioPcmPull lastPull;
 void *lastContext = nullptr;
 std::array<float, 1920> captured{};
 std::atomic<size_t> captureCount{captured.size()};
+std::atomic<bool> freezeOnCapture{false};
 class TestOutput final : public AudioOutput {
     std::atomic<bool> quit{false}, suspended{false};
     std::mutex renderMutex;
@@ -29,7 +30,7 @@ public:
         std::array<float, 480> buffer;
         while (!quit) {
             { std::scoped_lock lock(renderMutex);
-            if (!suspended) {
+            if (!suspended && (!freezeOnCapture || captureCount.load() < captured.size())) {
                 const bool push = this->mode == AudioOutputMode::MediaCompatibility && pull.read;
                 const auto requested = std::span<float>(buffer).first(push ? 480 : 192);
                 const size_t actual = push ? pull.read(context, requested) * 2 : (render(context, requested), requested.size());
@@ -161,14 +162,23 @@ int main(int argc, char **argv) {
             if (lastPull.read(lastContext, untouched) != 0) throw std::runtime_error("Empty push read fabricated PCM");
             for (float value : untouched) if (value != 42) throw std::runtime_error("Empty push read changed PCM");
         }
+        engine.EnableVisualization(true);
         engine.Play();
         captureCount = 0;
+        freezeOnCapture = true;
         engine.SuspendOutput(false);
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (captureCount.load() < captured.size() && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         engine.SuspendOutput(true);
         if (captureCount != captured.size()) throw std::runtime_error("WAV transport timeout");
+        std::array<float, VisualizationPcmTap::Frames * 2> visualPcm{};
+        if (engine.ReadVisualizationPcm(visualPcm).frames != VisualizationPcmTap::Frames)
+            throw std::runtime_error("Post-gain visual PCM was not published");
+        if (!std::equal(visualPcm.begin(), visualPcm.end(), captured.begin()))
+            throw std::runtime_error("Visualizer PCM differs from the samples delivered to the backend");
+        engine.EnableVisualization(false);
+        freezeOnCapture = false;
         float gain = 1;
         for (size_t i = 0; i < captured.size() / 2; ++i) {
             const float value = float((i % 240) % 16) / 32 * gain;
@@ -177,6 +187,7 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("WAV PCM altered, reordered or padded at loop boundary");
         }
         std::cout << "WAV producer/FIFO/gain transport (" << (push ? "push" : "callback") << "): 960 stereo frames, sample difference=0\n";
+        std::cout << "Visual tap matches delivered " << (push ? "push" : "callback") << " PCM including gain: 512 stereo frames, sample difference=0\n";
         engine.LoadSong(0); engine.Play(); engine.SuspendOutput(false);
     }
     for (int cycle = 0; cycle < 20; ++cycle) {

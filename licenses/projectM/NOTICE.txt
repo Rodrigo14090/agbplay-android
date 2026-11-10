@@ -1,0 +1,48 @@
+MilkDrop visualizer in agbplay Android
+
+libprojectM 4.1.8
+https://github.com/projectM-visualizer/projectm
+Commit 4967dc003e5206d7df3ff447287f7609c47d2343
+Copyright 2003-2026 projectM Team and individual source contributors.
+LGPL-2.1-or-later; license in LGPL-2.1.txt. No changes to upstream sources.
+
+Bundled projectM-eval: e8c311e86f4d8c082e96e02b6a33525034eee6d4.
+Copyright 2023 projectM Team, MIT: projectm-eval-MIT.txt.
+HLSL parser: Copyright 2013-2014 Unknown Worlds Entertainment, Inc.
+MIT: hlslparser-MIT.txt.
+GLM 0.9.9.0: Copyright 2005-2017 G-Truc Creation.
+Selected MIT license option: glm-copying.txt (from official 0.9.9.0 manual).
+SOIL2: Martin Lucas Golini / Jonathan Dummer, public domain.
+stb_image/stb_image_write: Sean Barrett and contributors, public domain.
+SOIL2 image_DXT/image_helper: Jonathan Dummer, public domain.
+SOIL2 etc1_utils: Copyright 2009 Google Inc., Apache-2.0.txt.
+Other embedded source notices remain in the pinned upstream tree.
+
+Aurora, Orbitas, Espectro presets are original to this integration, MIT:
+Copyright (c) 2026 agbplay Android contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Source and rebuilding/relinking instructions:
+https://github.com/Rodrigo14090/agbplay-android/tree/android/projectm-visualizer
+See docs/MILKDROP.md. The source and pinned build dependencies permit rebuilding
+the complete application with a modified projectM library. This test APK uses
+a development signature; rebuilt APKs can be installed with your own key.
+agbplay and Qt retain their respective licenses. No proprietary preset pack
+or copyrighted game music is included.

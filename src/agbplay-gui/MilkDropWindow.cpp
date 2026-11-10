@@ -1,0 +1,285 @@
+#include "MilkDropWindow.hpp"
+#include "FrameCadence.hpp"
+#include <QGuiApplication>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
+#include <QOpenGLExtraFunctions>
+#include <QOffscreenSurface>
+#include <QSurfaceFormat>
+#include <QDebug>
+#include <QResizeEvent>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <stdexcept>
+#ifdef Q_OS_ANDROID
+#include <EGL/egl.h>
+#endif
+
+MilkDropWindow::MilkDropWindow() : QOpenGLWindow(NoPartialUpdate)
+{
+    QSurfaceFormat format;
+#ifdef Q_OS_ANDROID
+    format.setRenderableType(QSurfaceFormat::OpenGLES);
+    format.setVersion(3, 0);
+#else
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    format.setVersion(3, 3);
+#endif
+    format.setDepthBufferSize(0);
+    format.setStencilBufferSize(0);
+    format.setSamples(0);
+    format.setSwapInterval(1);
+    setFormat(format);
+    setObjectName("milkDropSurface");
+    nextFrame.setSingleShot(true);
+    nextFrame.setTimerType(Qt::PreciseTimer);
+    connect(&nextFrame, &QTimer::timeout, this, [this] { if (running) update(); });
+    connect(this, &QOpenGLWindow::frameSwapped, this, &MilkDropWindow::ScheduleFrame);
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this] { UpdateRunning(); });
+    clock.start();
+    measurement.start();
+}
+MilkDropWindow::~MilkDropWindow() { nextFrame.stop(); Cleanup(); }
+void MilkDropWindow::SetEnabled(bool value) { enabled = value; UpdateRunning(); }
+void MilkDropWindow::SetPreset(QByteArray data) { preset = std::move(data); presetPending = true; }
+void MilkDropWindow::SetFiles(QStringList files, QString textures)
+{
+    paths = std::move(files); texturePath = std::move(textures); filesPending = true;
+}
+void MilkDropWindow::SelectFile(int index) { selectedFile = index; }
+void MilkDropWindow::Navigate(bool previous) { navigation = previous ? -1 : 1; }
+void MilkDropWindow::SetFrameLimit(int limit)
+{
+    frameLimit = limit == -1 ? -1 : 60;
+    targetFps = frameLimit > 0 ? frameLimit : 60;
+    deadline = 0;
+}
+void MilkDropWindow::UpdateRunning()
+{
+    const bool value = enabled && isExposed() && qGuiApp->applicationState() == Qt::ApplicationActive && !failed;
+    if (running == value) return;
+    running = value;
+    deadline = 0;
+    lastSubmitNs = 0;
+    intervalFrames = 0; renderNs = maxRenderNs = 0;
+    measurement.restart();
+    nextFrame.stop();
+    emit runningChanged(running);
+    if (running) update();
+}
+void MilkDropWindow::exposeEvent(QExposeEvent *event)
+{
+    UpdateRunning();
+    if (running && EnsureContext()) QOpenGLWindow::exposeEvent(event);
+}
+void MilkDropWindow::resizeEvent(QResizeEvent *)
+{
+    // QOpenGLWindow's default resize handler eagerly initializes GL, even for
+    // hidden tab pages. Defer it until an exposed frame; paintGL sizes projectM.
+    if (running) update();
+}
+bool MilkDropWindow::EnsureContext()
+{
+    if (!initialized && !failed) {
+        // This protected Qt handler initializes the actual window context
+        // without beginPaint's unconditional GL calls. Reject a failed context
+        // before Qt's painter can dereference its unavailable function table.
+        QResizeEvent initial(size(), size());
+        QOpenGLWindow::resizeEvent(&initial);
+    }
+    return initialized && !failed && context() && context()->isValid();
+}
+bool MilkDropWindow::event(QEvent *event)
+{
+    if (event->type() == QEvent::UpdateRequest || event->type() == QEvent::Paint) {
+        UpdateRunning();
+        if (!running || !EnsureContext()) return true;
+        // Native expose/paint requests must respect the same budget as our
+        // timer. Otherwise they could bypass the yield after a slow frame.
+        const auto remaining = deadline - clock.nsecsElapsed();
+        if (remaining > 0) {
+            if (!nextFrame.isActive()) nextFrame.start(static_cast<int>((remaining + 999999) / 1000000));
+            return true;
+        }
+    }
+    return QOpenGLWindow::event(event);
+}
+void MilkDropWindow::initializeGL()
+{
+    try {
+        if (!context() || !context()->isValid() || QOpenGLContext::currentContext() != context())
+            throw std::runtime_error("MilkDrop: no usable OpenGL context; audio remains available");
+        const auto actual = context()->format();
+        if (actual.majorVersion() < 3 || (!context()->isOpenGLES() && actual.majorVersion() == 3 && actual.minorVersion() < 3))
+            throw std::runtime_error("MilkDrop requires GLES 3.0 / OpenGL 3.3");
+        if (defaultFramebufferObject() != 0) throw std::runtime_error("projectM requires a window framebuffer");
+        auto *gl = context()->functions();
+        emit statisticsChanged(QString("GPU: %1 / %2 / %3 · utilización GPU: no disponible")
+            .arg(QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR))))
+            .arg(QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER))))
+            .arg(QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_VERSION)))));
+        qInfo() << "MilkDrop projectM 4.1.8:" << reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR))
+                << reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER))
+                << reinterpret_cast<const char *>(gl->glGetString(GL_VERSION));
+        renderer.Create();
+        ++contexts;
+        initialized = true;
+        presetPending = paths.isEmpty();
+        filesPending = !paths.isEmpty();
+        connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MilkDropWindow::Cleanup, Qt::DirectConnection);
+    } catch (const std::exception &error) {
+        failed = true;
+        qWarning() << "MilkDrop initialization:" << error.what();
+        emit statisticsChanged(QString::fromUtf8(error.what()));
+        UpdateRunning();
+    }
+}
+void MilkDropWindow::Cleanup()
+{
+    if (!initialized) return;
+    // Android may already have destroyed the window's EGLSurface. A tiny
+    // offscreen surface lets the same context delete its GL objects without
+    // waiting for that hidden/destroyed native window to reappear.
+    QOffscreenSurface cleanupSurface(context()->screen());
+    cleanupSurface.setFormat(context()->format());
+    cleanupSurface.create();
+    if (!context()->makeCurrent(&cleanupSurface) && isExposed()) makeCurrent();
+    scaleBuffer.reset();
+    renderer.Destroy();
+    context()->doneCurrent();
+    initialized = false;
+    disconnect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MilkDropWindow::Cleanup);
+}
+void MilkDropWindow::paintGL()
+{
+    if (!initialized || !running) return;
+    QElapsedTimer work; work.start();
+    try {
+        QSize nextSize{qRound(width() * devicePixelRatio()), qRound(height() * devicePixelRatio())};
+#ifdef Q_OS_ANDROID
+        EGLint nativeWidth = 0, nativeHeight = 0;
+        const auto display = eglGetCurrentDisplay();
+        const auto draw = eglGetCurrentSurface(EGL_DRAW);
+        if (display != EGL_NO_DISPLAY && draw != EGL_NO_SURFACE &&
+            eglQuerySurface(display, draw, EGL_WIDTH, &nativeWidth) &&
+            eglQuerySurface(display, draw, EGL_HEIGHT, &nativeHeight) && nativeWidth > 0 && nativeHeight > 0) {
+            nextSize = {nativeWidth, nativeHeight};
+            nativeSizeQueried = true;
+        }
+#endif
+        const bool resized = framebuffer != nextSize;
+        framebuffer = nextSize;
+        if (filesPending) {
+            std::vector<std::string> files; files.reserve(size_t(paths.size()));
+            for (const auto &path : paths) files.push_back(path.toStdString());
+            renderer.SetFiles(files, texturePath.toStdString()); filesPending = false;
+        }
+        if (presetPending) { renderer.Load(preset.toStdString()); presetPending = false; }
+        if (selectedFile >= 0) { renderer.Select(unsigned(selectedFile)); selectedFile = -1; }
+        if (navigation) { renderer.Next(navigation < 0); navigation = 0; retryPresetAt = 0; }
+        if (retryPresetAt && clock.nsecsElapsed() >= retryPresetAt) {
+            retryPresetAt = 0;
+            renderer.Next(false);
+        }
+        std::array<float, VisualizationPcmTap::Frames * 2> pcm{};
+        const auto result = readPcm ? readPcm(pcm) : VisualizationPcmTap::Result{};
+        pcmFrames += result.frames;
+        skippedFrames += result.skippedFrames;
+        // No publication during pause: feed silence instead of repeating stale PCM.
+        QSize renderSize = framebuffer;
+        if (reducedResolution && std::min(renderSize.width(), renderSize.height()) > 720)
+            renderSize.scale(renderSize.width() * 720 / std::min(renderSize.width(), renderSize.height()),
+                             renderSize.height() * 720 / std::min(renderSize.width(), renderSize.height()), Qt::KeepAspectRatio);
+        renderResolution = renderSize;
+        if (renderSize != framebuffer && (!scaleBuffer || scaleBuffer->size() != renderSize)) {
+            scaleBuffer = std::make_unique<QOpenGLFramebufferObject>(renderSize);
+            context()->extraFunctions()->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            if (!scaleBuffer->isValid()) {
+                scaleBuffer.reset();
+                renderSize = framebuffer;
+                renderResolution = renderSize;
+                emit statisticsChanged("720p no disponible; usando resolución nativa");
+            }
+        }
+        renderer.Render(pcm, renderSize.width(), renderSize.height(), targetFps);
+        if (renderSize != framebuffer && scaleBuffer && scaleBuffer->isValid()) {
+            auto *gl = context()->extraFunctions();
+            // GLES 3 framebuffer targets; Qt Android may expose only GLES 2 macros.
+            constexpr GLenum readFramebuffer = 0x8CA8;
+            constexpr GLenum drawFramebuffer = 0x8CA9;
+            gl->glDisable(GL_SCISSOR_TEST);
+            gl->glBindFramebuffer(readFramebuffer, 0);
+            gl->glBindFramebuffer(drawFramebuffer, scaleBuffer->handle());
+            gl->glBlitFramebuffer(0, 0, renderSize.width(), renderSize.height(), 0, 0, renderSize.width(), renderSize.height(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            gl->glBindFramebuffer(readFramebuffer, scaleBuffer->handle());
+            gl->glBindFramebuffer(drawFramebuffer, 0);
+            gl->glBlitFramebuffer(0, 0, renderSize.width(), renderSize.height(), 0, 0, framebuffer.width(), framebuffer.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            gl->glViewport(0, 0, framebuffer.width(), framebuffer.height());
+        }
+        const int position = int(renderer.Current());
+        if (!paths.isEmpty() && position != lastPosition) {
+            lastPosition = position;
+            emit presetChanged(position);
+        }
+        if (resized || frames == 0) {
+            GLint actual[4]{};
+            context()->functions()->glGetIntegerv(GL_VIEWPORT, actual);
+            viewport = {actual[2], actual[3]};
+            qInfo() << "MilkDrop native framebuffer:" << framebuffer << "GL viewport:" << viewport
+                    << "DPR:" << devicePixelRatio() << "FBO:" << defaultFramebufferObject();
+        }
+        if (auto error = renderer.TakeError(); !error.empty()) {
+            ++presetErrors;
+            // After projectM exhausts its bounded retries, try again later;
+            // otherwise one group of broken shaders can stop rotation forever.
+            if (!paths.isEmpty()) retryPresetAt = clock.nsecsElapsed() + 2000000000LL;
+            qWarning() << "MilkDrop preset:" << QString::fromStdString(error);
+            emit statisticsChanged(QString::fromStdString(error));
+        }
+    } catch (const std::exception &error) {
+        failed = true;
+        qWarning() << "MilkDrop render:" << error.what();
+        emit statisticsChanged(QString::fromUtf8(error.what()));
+        UpdateRunning();
+        return;
+    }
+    ++frames; ++intervalFrames;
+    const auto elapsed = work.nsecsElapsed();
+    lastSubmitNs = elapsed;
+    renderNs += elapsed; maxRenderNs = std::max(maxRenderNs, elapsed);
+    if (measurement.elapsed() >= 2000) {
+        actualFps = double(intervalFrames) * 1e9 / double(measurement.nsecsElapsed());
+        const double averageMs = double(renderNs) / double(intervalFrames) / 1e6;
+
+        const auto text = QString("%1×%2 · %3 FPS / %4 · CPU submit %5 ms · visual drop %6")
+            .arg(framebuffer.width()).arg(framebuffer.height()).arg(actualFps, 0, 'f', 1)
+            .arg(targetFps).arg(averageMs, 0, 'f', 1).arg(skippedFrames);
+        qInfo().noquote() << "MilkDrop:" << text << "max submit ms=" << double(maxRenderNs) / 1e6;
+        emit statisticsChanged(text);
+        measurement.restart(); intervalFrames = 0; renderNs = maxRenderNs = 0;
+    }
+}
+void MilkDropWindow::ScheduleFrame()
+{
+    if (!running) return;
+    if (frameLimit == -1) { deadline = 0; nextFrame.start(0); return; }
+    const auto now = clock.nsecsElapsed();
+    deadline = FrameCadence::NextDeadline(deadline, now, targetFps, lastSubmitNs);
+    nextFrame.start(static_cast<int>(std::max<qint64>(0, (deadline - now + 999999) / 1000000)));
+}
+QJsonObject MilkDropWindow::Diagnostics() const
+{
+    return {{"frames", double(frames)}, {"pcmFrames", double(pcmFrames)}, {"skippedVisualFrames", double(skippedFrames)},
+        {"contexts", contexts}, {"presetErrors", presetErrors},
+        {"playlistChanges", int(renderer.Changes())}, {"playlistPosition", int(renderer.Current())},
+        {"playlistSize", int(paths.size())},
+        {"eglSurfaceSize", nativeSizeQueried},
+        {"running", running}, {"initialized", initialized}, {"failed", failed}, {"fps", actualFps},
+        {"targetFps", targetFps}, {"width", framebuffer.width()}, {"height", framebuffer.height()},
+        {"renderWidth", renderResolution.width()}, {"renderHeight", renderResolution.height()},
+        {"viewportWidth", viewport.width()}, {"viewportHeight", viewport.height()},
+        {"logicalWidth", width()}, {"logicalHeight", height()}, {"dpr", devicePixelRatio()}};
+}

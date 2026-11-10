@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include <QSplitter>
 #include <QBoxLayout>
 #include <QTabWidget>
@@ -13,7 +14,7 @@ class TouchPlayerLayout : public QWidget
     Q_OBJECT
 public:
     enum class Mode { Compact, TwoPane, ThreePane };
-    TouchPlayerLayout(const std::array<QWidget *, 5> &pages, QWidget *controls, QWidget *parent = nullptr);
+    TouchPlayerLayout(const std::vector<QWidget *> &pages, QWidget *controls, QWidget *parent = nullptr);
     QSize minimumSizeHint() const override { return {280, 240}; }
     Mode mode() const { return currentMode; }
     static Mode modeForSize(QSize size);
@@ -23,7 +24,7 @@ protected:
 
 private:
     void arrange(Mode mode);
-    std::array<QWidget *, 5> pages;
+    std::vector<QWidget *> pages;
     QVBoxLayout layout{this};
     QSplitter panels{Qt::Horizontal, this};
     QSplitter lists{Qt::Vertical, &panels};

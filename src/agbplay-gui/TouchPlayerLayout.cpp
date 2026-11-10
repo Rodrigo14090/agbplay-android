@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <QTabBar>
 
-TouchPlayerLayout::TouchPlayerLayout(const std::array<QWidget *, 5> &pages, QWidget *controls, QWidget *parent) :
+TouchPlayerLayout::TouchPlayerLayout(const std::vector<QWidget *> &pages, QWidget *controls, QWidget *parent) :
     QWidget(parent), pages(pages)
 {
     setObjectName("touchPlayerLayout");
@@ -48,14 +48,14 @@ void TouchPlayerLayout::resizeEvent(QResizeEvent *event)
 
 void TouchPlayerLayout::arrange(Mode mode)
 {
-    const std::array<QString, 5> titles{"Canciones", "Playlist", "Pistas", "ROM", "Log"};
+    const std::array<QString, 6> titles{"Canciones", "Playlist", "Pistas", "ROM", "Log", "MilkDrop"};
     if (initialized) {
         if (currentMode == Mode::Compact) {
             compactPage = navigation.currentIndex();
             detailPage = compactPage >= 2 ? compactPage : 2;
         }
         else if (details.currentWidget()) {
-            for (int i = 2; i < 5; ++i)
+            for (int i = 2; i < int(pages.size()); ++i)
                 if (details.currentWidget() == pages[static_cast<size_t>(i)])
                     detailPage = i;
         }
@@ -91,6 +91,7 @@ void TouchPlayerLayout::arrange(Mode mode)
         }
         details.addTab(pages[3], titles[3]);
         details.addTab(pages[4], titles[4]);
+        if (pages.size() > 5) details.addTab(pages[5], titles[5]);
         panels.addWidget(&details);
         details.setCurrentWidget(pages[static_cast<size_t>(mode == Mode::TwoPane ? detailPage : std::max(3, detailPage))]);
         details.show();

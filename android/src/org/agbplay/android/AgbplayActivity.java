@@ -3,6 +3,7 @@ package org.agbplay.android;
 import android.content.Intent;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.KeyEvent;
 import org.qtproject.qt.android.bindings.QtActivity;
 
 /** Qt retains ownership of its views, document picker and configuration changes. */
@@ -15,6 +16,19 @@ public final class AgbplayActivity extends QtActivity {
         LifecycleDiagnostics.install(getApplicationContext());
         record("create");
         super.onCreate(state);
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        // Qt handles KEYCODE_BACK before Activity.onBackPressed and may close
+        // the hidden main window. Consume both halves at the Android boundary.
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && MilkDropOrientation.isPresenting()) {
+            if (event.getAction() == KeyEvent.ACTION_UP) MilkDropOrientation.consumeBack();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+    @Override public void onBackPressed() {
+        if (MilkDropOrientation.consumeBack()) return;
+        super.onBackPressed();
     }
     @Override public void onResume() { super.onResume(); record("resume"); }
     @Override public void onPause() { record("pause"); super.onPause(); }
