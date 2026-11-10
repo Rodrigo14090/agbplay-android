@@ -16,6 +16,10 @@ public final class AgbplayActivity extends QtActivity {
         record("create");
         super.onCreate(state);
     }
+    @Override public void onBackPressed() {
+        if (MilkDropOrientation.consumeBack()) return;
+        super.onBackPressed();
+    }
     @Override public void onResume() { super.onResume(); record("resume"); }
     @Override public void onPause() { record("pause"); super.onPause(); }
     @Override public void onStop() { record("stop"); super.onStop(); }

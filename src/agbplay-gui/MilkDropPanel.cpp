@@ -18,10 +18,36 @@
 #include <algorithm>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
+#include <QJniEnvironment>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QCoreApplication>
 #endif
 
 namespace {
+#ifdef Q_OS_ANDROID
+QMutex backMutex;
+MilkDropPanel *backPanel = nullptr;
+void AndroidBack(JNIEnv *, jclass)
+{
+    QMutexLocker lock(&backMutex);
+    if (backPanel) QMetaObject::invokeMethod(backPanel, [panel = backPanel] {
+        panel->SetFullscreen(false);
+    }, Qt::QueuedConnection);
+}
+void RegisterAndroidBack()
+{
+    QJniEnvironment env;
+    const auto clazz = env.findClass("org/agbplay/android/MilkDropOrientation");
+    JNINativeMethod method[]{
+        {const_cast<char *>("nativeExit"), const_cast<char *>("()V"), reinterpret_cast<void *>(AndroidBack)}
+    };
+    if (!clazz || env->RegisterNatives(clazz, method, 1) != JNI_OK) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        qWarning("MilkDrop: could not register Android Back handler");
+    }
+}
+#endif
 class PresentationWindow : public QWidget {
 public:
     std::function<void()> leave;
@@ -32,6 +58,9 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
     viewport(QWidget::createWindowContainer(surface, this))
 {
     setObjectName("milkDropPanel");
+#ifdef Q_OS_ANDROID
+    RegisterAndroidBack();
+#endif
     viewport->setObjectName("milkDropViewport");
     viewport->setMinimumSize(160, 100);
     layout.setContentsMargins(0, 0, 0, 0);
@@ -97,6 +126,9 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
 MilkDropPanel::~MilkDropPanel()
 {
     PrepareForShutdown();
+#ifdef Q_OS_ANDROID
+    { QMutexLocker lock(&backMutex); if (backPanel == this) backPanel = nullptr; }
+#endif
     // Deferred deletes may not run after QApplication::exec() has returned.
     for (const auto &retired : retiredPresentations) if (retired) delete retired.data();
     for (auto *selector : selectors) disconnect(selector, nullptr, this, nullptr);
@@ -200,6 +232,9 @@ void MilkDropPanel::SetFullscreen(bool value)
     if (value == bool(fullscreen)) return;
     surface->SetEnabled(false);
     if (value) {
+#ifdef Q_OS_ANDROID
+        { QMutexLocker lock(&backMutex); backPanel = this; }
+#endif
         previousWindow = window();
         previousVisible = previousWindow->isVisible();
         auto *host = new PresentationWindow;
@@ -223,6 +258,9 @@ void MilkDropPanel::SetFullscreen(bool value)
         // Android surface teardown when the screen is switched off.
         if (previousVisible) previousWindow->hide();
     } else {
+#ifdef Q_OS_ANDROID
+        { QMutexLocker lock(&backMutex); if (backPanel == this) backPanel = nullptr; }
+#endif
         if (!closing && previousVisible && previousWindow) previousWindow->show();
         fullscreen->hide();
         fullscreenLayout->removeWidget(viewport);

@@ -10,12 +10,19 @@ import java.lang.ref.WeakReference;
 
 /** Only presentation orientation; never participates in audio or services. */
 public final class MilkDropOrientation {
+    private static native void nativeExit();
     private static WeakReference<Activity> owner = new WeakReference<>(null);
     private static int previous = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
     private static int previousVisibility;
     private static int previousBehavior;
     private static int previousVisibleTypes;
     private MilkDropOrientation() { }
+    /** Called by Activity on Android's main thread, including system back gestures. */
+    public static boolean consumeBack() {
+        if (owner.get() == null) return false;
+        try { nativeExit(); return true; }
+        catch (UnsatisfiedLinkError error) { return false; }
+    }
     public static void setLandscape(Activity activity, boolean enabled) {
         if (activity == null) return;
         activity.runOnUiThread(() -> {
