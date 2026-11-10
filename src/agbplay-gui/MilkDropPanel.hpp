@@ -41,6 +41,7 @@ private:
     QString textures;
     QString collectionStatus;
     MilkDropLibrary *library = nullptr;
+    QTimer indexTimer{this};
     QList<QComboBox *> selectors;
     int selected = 0;
     bool closing = false;

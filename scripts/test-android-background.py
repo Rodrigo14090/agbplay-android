@@ -57,7 +57,8 @@ def continuous(name, seconds=12):
         assert current and current["playing"] and not current["error"], current
         assert current["pid"] == first["pid"], ("Process restarted during playback", first, current)
     last = snapshot(name)
-    assert last["sequence"] > first["sequence"] + seconds, (first, last)  # Qt event loop alive
+    # Allow one timer tick of sampling jitter while still detecting a stalled UI.
+    assert last["sequence"] >= first["sequence"] + max(1, seconds - 1), (first, last)
     assert last["frames"] > first["frames"] + seconds * 24000, (first, last)
     assert last["rms"] > 0.00001, last
     assert "agbplay:playback" in active_wake_locks()

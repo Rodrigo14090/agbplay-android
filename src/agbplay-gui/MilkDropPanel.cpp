@@ -101,6 +101,19 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
     libraryStatus->setWordWrap(true);
     layout.addWidget(libraryStatus);
     library = new MilkDropLibrary(this);
+    indexTimer.setInterval(0);
+    connect(&indexTimer, &QTimer::timeout, this, [this] {
+        bool incomplete = false;
+        for (auto *selector : selectors) {
+            const auto start = selector->count();
+            if (start >= names.size()) continue;
+            const QSignalBlocker blocker(selector);
+            selector->addItems(names.mid(start, 128));
+            if (selected < selector->count()) selector->setCurrentIndex(selected);
+            incomplete |= selector->count() < names.size();
+        }
+        if (!incomplete) indexTimer.stop();
+    });
     connect(library, &MilkDropLibrary::status, this, [this, libraryStatus](const QString &message) {
         collectionStatus = message;
         libraryStatus->setText(message);
@@ -110,12 +123,7 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
         textures = textureDir;
         presets.append(files);
         for (const auto &path : files) names.append(QFileInfo(path).completeBaseName());
-        for (auto *selector : selectors) {
-            QSignalBlocker blocker(selector);
-            QStringList added; added.reserve(files.size());
-            for (const auto &path : files) added.append(QFileInfo(path).completeBaseName());
-            selector->addItems(added);
-        }
+        indexTimer.start();
         surface->SetFiles(presets, textures);
     });
 #ifdef Q_OS_ANDROID
@@ -215,7 +223,10 @@ void MilkDropPanel::ImportPreset()
     if (!copy.open(QIODevice::WriteOnly) || copy.write(data) != data.size() || !copy.commit()) return;
     presets.append(directory + "/" + name + ".milk"); names.append(name);
     surface->SetFiles(presets, textures);
-    for (auto *selector : selectors) { QSignalBlocker block(selector); selector->addItem(name); }
+    for (auto *selector : selectors) {
+        if (selector->count() == names.size() - 1) { QSignalBlocker block(selector); selector->addItem(name); }
+        else indexTimer.start();
+    }
     SelectPreset(int(presets.size()) - 1);
 }
 void MilkDropPanel::SetOrientation(bool landscape)
