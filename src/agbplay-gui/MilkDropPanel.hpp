@@ -39,6 +39,7 @@ private:
     QStringList presets;
     QStringList names;
     QString textures;
+    QString collectionStatus;
     MilkDropLibrary *library = nullptr;
     QList<QComboBox *> selectors;
     int selected = 0;

@@ -101,7 +101,11 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
     libraryStatus->setWordWrap(true);
     layout.addWidget(libraryStatus);
     library = new MilkDropLibrary(this);
-    connect(library, &MilkDropLibrary::status, libraryStatus, &QLabel::setText);
+    connect(library, &MilkDropLibrary::status, this, [this, libraryStatus](const QString &message) {
+        collectionStatus = message;
+        libraryStatus->setText(message);
+        qInfo().noquote() << "MilkDrop collection:" << message;
+    });
     connect(library, &MilkDropLibrary::ready, this, [this](const QStringList &files, const QString &textureDir) {
         textures = textureDir;
         presets.append(files);
@@ -285,5 +289,8 @@ QJsonObject MilkDropPanel::Diagnostics() const
 {
     auto result = surface->Diagnostics();
     result["fullscreen"] = bool(fullscreen); result["preset"] = selected;
+    result["collectionStatus"] = collectionStatus;
+    result["indexedPresets"] = int(presets.size());
+    result["texturesAvailable"] = !textures.isEmpty();
     return result;
 }
