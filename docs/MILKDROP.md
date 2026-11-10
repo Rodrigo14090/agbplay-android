@@ -112,7 +112,8 @@ sean compatibles con todos los controladores gráficos.
   commit `6368812f27bc747b517218fbf89d21d59afce4d9`, SHA-256 ZIP
   `38e93612f79a313830480d7458d8eb065d2b67992211a5dd0c92ef87b8607f6a`.
 
-Se obtiene cada ZIP desde `https://codeload.github.com` con TLS, sin redirecciones,
+Se obtiene cada ZIP desde `https://codeload.github.com` con TLS del sistema Android
+(o Qt Network en escritorio), sin redirecciones,
 y se valida el hash completo antes de extraer. Se rechazan rutas absolutas,
 recorridos, enlaces simbólicos, nombres duplicados, ficheros inesperados y tamaños
 excesivos; hay límites por ZIP, archivo y total. No se ejecutan scripts descargados.

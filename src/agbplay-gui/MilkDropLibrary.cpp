@@ -16,6 +16,10 @@
 #include <array>
 #include <memory>
 #include <stdexcept>
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+#include <QJniEnvironment>
+#endif
 
 namespace {
 struct Pack { const char *repo, *commit, *hash, *folder; bool texture; };
@@ -29,8 +33,24 @@ constexpr quint64 maxExtracted = 160 * 1024 * 1024;
 void CheckCancel() { if (QThread::currentThread()->isInterruptionRequested()) throw std::runtime_error("Cancelado"); }
 void Download(const Pack &pack, const QString &destination)
 {
-    QNetworkAccessManager network;
     const QUrl url(QString("https://codeload.github.com/projectM-visualizer/%1/zip/%2").arg(pack.repo, pack.commit));
+#ifdef Q_OS_ANDROID
+    const auto address = QJniObject::fromString(url.toString());
+    const auto path = QJniObject::fromString(destination);
+    const auto result = QJniObject::callStaticObjectMethod("org/agbplay/android/MilkDropDownloads", "download",
+        "(Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;", address.object<jstring>(),
+        path.object<jstring>(), static_cast<jlong>(maxArchive));
+    QJniEnvironment env;
+    if (env->ExceptionCheck()) { env->ExceptionClear(); throw std::runtime_error("Error JNI al descargar presets"); }
+    CheckCancel();
+    if (!result.isValid() || !result.toString().isEmpty()) throw std::runtime_error("Falló la descarga HTTPS de presets");
+    QFile file(destination);
+    if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("No se puede leer la descarga");
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file) || hash.result().toHex() != pack.hash)
+        throw std::runtime_error("La descarga no supera la verificación SHA-256");
+#else
+    QNetworkAccessManager network;
     QNetworkRequest request(url);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     auto *reply = network.get(request);
@@ -57,6 +77,7 @@ void Download(const Pack &pack, const QString &destination)
     if (bad || reply->error() != QNetworkReply::NoError || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200)
         throw std::runtime_error("Falló la descarga HTTPS de presets");
     if (hash.result().toHex() != pack.hash) throw std::runtime_error("La descarga no supera la verificación SHA-256");
+#endif
 }
 void Extract(const Pack &pack, const QString &archive, const QString &root, quint64 &extracted)
 {
@@ -107,7 +128,15 @@ void Extract(const Pack &pack, const QString &archive, const QString &root, quin
 }
 }
 MilkDropLibrary::MilkDropLibrary(QObject *parent) : QObject(parent) {}
-MilkDropLibrary::~MilkDropLibrary() { if (worker) { worker->requestInterruption(); worker->wait(); delete worker; } }
+MilkDropLibrary::~MilkDropLibrary() {
+    if (worker) {
+        worker->requestInterruption();
+#ifdef Q_OS_ANDROID
+        QJniObject::callStaticMethod<void>("org/agbplay/android/MilkDropDownloads", "cancel", "()V");
+#endif
+        worker->wait(); delete worker;
+    }
+}
 void MilkDropLibrary::Start(const QString &root)
 {
     if (worker) return;
