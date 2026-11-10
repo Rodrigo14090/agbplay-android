@@ -123,7 +123,7 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
         textures = textureDir;
         presets.append(files);
         for (const auto &path : files) names.append(QFileInfo(path).completeBaseName());
-        indexTimer.start();
+        if (isVisible()) indexTimer.start();
         surface->SetFiles(presets, textures);
     });
 #ifdef Q_OS_ANDROID
@@ -225,7 +225,7 @@ void MilkDropPanel::ImportPreset()
     surface->SetFiles(presets, textures);
     for (auto *selector : selectors) {
         if (selector->count() == names.size() - 1) { QSignalBlocker block(selector); selector->addItem(name); }
-        else indexTimer.start();
+        else if (isVisible()) indexTimer.start();
     }
     SelectPreset(int(presets.size()) - 1);
 }
@@ -294,8 +294,16 @@ void MilkDropPanel::SetFullscreen(bool value)
     UpdateEnabled();
 }
 void MilkDropPanel::UpdateEnabled() { surface->SetEnabled(!closing && (isVisible() || bool(fullscreen))); }
-void MilkDropPanel::showEvent(QShowEvent *event) { QWidget::showEvent(event); UpdateEnabled(); }
-void MilkDropPanel::hideEvent(QHideEvent *event) { QWidget::hideEvent(event); UpdateEnabled(); }
+void MilkDropPanel::showEvent(QShowEvent *event) {
+    QWidget::showEvent(event);
+    for (const auto *selector : selectors) if (selector->count() < names.size()) { indexTimer.start(); break; }
+    UpdateEnabled();
+}
+void MilkDropPanel::hideEvent(QHideEvent *event) {
+    QWidget::hideEvent(event);
+    indexTimer.stop();
+    UpdateEnabled();
+}
 QJsonObject MilkDropPanel::Diagnostics() const
 {
     auto result = surface->Diagnostics();
