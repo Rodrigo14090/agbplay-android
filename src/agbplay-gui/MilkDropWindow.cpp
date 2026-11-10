@@ -196,6 +196,12 @@ void MilkDropWindow::paintGL()
         if (renderSize != framebuffer && (!scaleBuffer || scaleBuffer->size() != renderSize)) {
             scaleBuffer = std::make_unique<QOpenGLFramebufferObject>(renderSize);
             context()->extraFunctions()->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            if (!scaleBuffer->isValid()) {
+                scaleBuffer.reset();
+                renderSize = framebuffer;
+                renderResolution = renderSize;
+                emit statisticsChanged("720p no disponible; usando resolución nativa");
+            }
         }
         renderer.Render(pcm, renderSize.width(), renderSize.height(), targetFps);
         if (renderSize != framebuffer && scaleBuffer && scaleBuffer->isValid()) {
