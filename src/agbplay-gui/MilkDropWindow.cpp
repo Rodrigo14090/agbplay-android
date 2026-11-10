@@ -206,12 +206,15 @@ void MilkDropWindow::paintGL()
         renderer.Render(pcm, renderSize.width(), renderSize.height(), targetFps);
         if (renderSize != framebuffer && scaleBuffer && scaleBuffer->isValid()) {
             auto *gl = context()->extraFunctions();
+            // GLES 3 framebuffer targets; Qt Android may expose only GLES 2 macros.
+            constexpr GLenum readFramebuffer = 0x8CA8;
+            constexpr GLenum drawFramebuffer = 0x8CA9;
             gl->glDisable(GL_SCISSOR_TEST);
-            gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scaleBuffer->handle());
+            gl->glBindFramebuffer(readFramebuffer, 0);
+            gl->glBindFramebuffer(drawFramebuffer, scaleBuffer->handle());
             gl->glBlitFramebuffer(0, 0, renderSize.width(), renderSize.height(), 0, 0, renderSize.width(), renderSize.height(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
-            gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, scaleBuffer->handle());
-            gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            gl->glBindFramebuffer(readFramebuffer, scaleBuffer->handle());
+            gl->glBindFramebuffer(drawFramebuffer, 0);
             gl->glBlitFramebuffer(0, 0, renderSize.width(), renderSize.height(), 0, 0, framebuffer.width(), framebuffer.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR);
             gl->glBindFramebuffer(GL_FRAMEBUFFER, 0);
             gl->glViewport(0, 0, framebuffer.width(), framebuffer.height());
