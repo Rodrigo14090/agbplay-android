@@ -465,7 +465,19 @@ void MainWindow::SetupWidgets()
     containerRightLayout.addWidget(&containerRightSplitter);
     containerRightSplitter.setChildrenCollapsible(false);
     containerRightSplitter.addWidget(&containerStatusInfo);
+#ifdef AGBPLAY_PROJECTM
+    logViews = new QTabWidget(&containerRightSplitter);
+    logViews->addTab(&logWidget, "agbplay");
+    auto *visualLog = new QTextEdit(logViews);
+    visualLog->setReadOnly(true);
+    visualLog->document()->setMaximumBlockCount(2000);
+    visualLog->append("Utilización GPU: no disponible mediante OpenGL ES; los tiempos de envío no son uso de GPU.");
+    logViews->addTab(visualLog, "MilkDrop / GPU");
+    connect(milkDrop.get(), &MilkDropPanel::diagnostic, visualLog, &QTextEdit::append);
+    containerRightSplitter.addWidget(logViews);
+#else
     containerRightSplitter.addWidget(&logWidget);
+#endif
     containerRightSplitter.setStretchFactor(0, 5);
     containerRightSplitter.setStretchFactor(1, 1);
     containerRightLayout.setContentsMargins(0, 0, 0, 0);
@@ -587,7 +599,11 @@ void MainWindow::SetupTouchInterface()
     auto *oldCentral = takeCentralWidget();
     oldCentral->setParent(this);
     oldCentral->hide();
+#ifdef AGBPLAY_PROJECTM
+    std::vector<QWidget *> pages{&songlistWidget, &playlistWidget, tracksPage, infoScroll, logViews};
+#else
     std::vector<QWidget *> pages{&songlistWidget, &playlistWidget, tracksPage, infoScroll, &logWidget};
+#endif
 #ifdef AGBPLAY_PROJECTM
     pages.push_back(milkDrop.get());
 #endif

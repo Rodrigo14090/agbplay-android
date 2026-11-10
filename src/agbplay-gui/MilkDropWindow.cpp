@@ -51,8 +51,8 @@ void MilkDropWindow::SelectFile(int index) { selectedFile = index; }
 void MilkDropWindow::Navigate(bool previous) { navigation = previous ? -1 : 1; }
 void MilkDropWindow::SetFrameLimit(int limit)
 {
-    frameLimit = limit == 30 ? 30 : limit == 60 ? 60 : 0;
-    targetFps = frameLimit ? frameLimit : 60;
+    frameLimit = limit == -1 ? -1 : limit == 30 ? 30 : limit == 60 ? 60 : 0;
+    targetFps = frameLimit > 0 ? frameLimit : 60;
     deadline = 0;
 }
 void MilkDropWindow::UpdateRunning()
@@ -115,6 +115,10 @@ void MilkDropWindow::initializeGL()
             throw std::runtime_error("MilkDrop requires GLES 3.0 / OpenGL 3.3");
         if (defaultFramebufferObject() != 0) throw std::runtime_error("projectM requires a window framebuffer");
         auto *gl = context()->functions();
+        emit statisticsChanged(QString("GPU: %1 / %2 / %3 · utilización GPU: no disponible")
+            .arg(QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR))))
+            .arg(QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER))))
+            .arg(QString::fromLatin1(reinterpret_cast<const char *>(gl->glGetString(GL_VERSION)))));
         qInfo() << "MilkDrop projectM 4.1.8:" << reinterpret_cast<const char *>(gl->glGetString(GL_VENDOR))
                 << reinterpret_cast<const char *>(gl->glGetString(GL_RENDERER))
                 << reinterpret_cast<const char *>(gl->glGetString(GL_VERSION));
@@ -230,6 +234,7 @@ void MilkDropWindow::paintGL()
 void MilkDropWindow::ScheduleFrame()
 {
     if (!running) return;
+    if (frameLimit == -1) { deadline = 0; nextFrame.start(0); return; }
     const auto now = clock.nsecsElapsed();
     deadline = FrameCadence::NextDeadline(deadline, now, targetFps, lastSubmitNs);
     nextFrame.start(static_cast<int>(std::max<qint64>(0, (deadline - now + 999999) / 1000000)));

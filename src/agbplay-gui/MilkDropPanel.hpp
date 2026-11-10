@@ -19,6 +19,8 @@ public:
     bool IsFullscreen() const { return fullscreen != nullptr; }
     QJsonObject Diagnostics() const;
     void SelectPreset(int index);
+signals:
+    void diagnostic(const QString &message);
 protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;

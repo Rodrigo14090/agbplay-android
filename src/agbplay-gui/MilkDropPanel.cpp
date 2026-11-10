@@ -92,6 +92,7 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
     statistics->setWordWrap(true);
     layout.addWidget(statistics);
     connect(surface, &MilkDropWindow::statisticsChanged, statistics, &QLabel::setText);
+    connect(surface, &MilkDropWindow::statisticsChanged, this, &MilkDropPanel::diagnostic);
     connect(surface, &MilkDropWindow::presetChanged, this, [this](int index) {
         if (index < 0 || index >= presets.size()) return;
         selected = index;
@@ -118,6 +119,7 @@ MilkDropPanel::MilkDropPanel(QWidget *parent) : QWidget(parent), surface(new Mil
         collectionStatus = message;
         libraryStatus->setText(message);
         qInfo().noquote() << "MilkDrop collection:" << message;
+        emit diagnostic(message);
     });
     connect(library, &MilkDropLibrary::ready, this, [this](const QStringList &files, const QString &textureDir) {
         textures = textureDir;
@@ -196,6 +198,11 @@ QWidget *MilkDropPanel::MakeControls(bool full)
         auto *import = new QPushButton("+", row);
         import->setAccessibleName("Importar preset MilkDrop"); import->setMinimumHeight(48);
         buttons->addWidget(import);
+        auto *unlimited = new QPushButton("Sin límite", row);
+        unlimited->setCheckable(true); unlimited->setMinimumHeight(48);
+        unlimited->setToolTip("Desactivar el limitador adaptativo de FPS");
+        buttons->addWidget(unlimited);
+        connect(unlimited, &QPushButton::toggled, this, [this](bool enabled) { surface->SetFrameLimit(enabled ? -1 : 0); });
         connect(import, &QPushButton::clicked, this, &MilkDropPanel::ImportPreset);
     }
     return row;

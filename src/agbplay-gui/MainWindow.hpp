@@ -178,6 +178,9 @@ private:
 
     /* ..log widget */
     QTextEdit logWidget{&containerRight};
+#ifdef AGBPLAY_PROJECTM
+    QTabWidget *logViews = nullptr;
+#endif
 
     /* status bar */
     QProgressBar progressBar;
