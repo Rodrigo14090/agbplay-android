@@ -43,7 +43,8 @@ void Download(const Pack &pack, const QString &destination)
     QJniEnvironment env;
     if (env->ExceptionCheck()) { env->ExceptionClear(); throw std::runtime_error("Error JNI al descargar presets"); }
     CheckCancel();
-    if (!result.isValid() || !result.toString().isEmpty()) throw std::runtime_error("Falló la descarga HTTPS de presets");
+    if (!result.isValid()) throw std::runtime_error("Falló la descarga HTTPS de presets");
+    if (!result.toString().isEmpty()) throw std::runtime_error(result.toString().toStdString());
     QFile file(destination);
     if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("No se puede leer la descarga");
     QCryptographicHash hash(QCryptographicHash::Sha256);
