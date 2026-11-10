@@ -25,12 +25,13 @@ con tamaño lógico × devicePixelRatio; se registra también el viewport leído
 GL. No se reduce resolución ni se añade MSAA/profundidad/stencil innecesarios.
 Se solicita swap interval 1; frameSwapped y un único timer
 preciso marcan los próximos fotogramas, sin ráfagas para recuperar retrasos.
-Objetivo inicial 60 FPS. Cada dos segundos, el modo automático puede bajar a
-30/20/15/10/5/2/1 si el rendimiento o tiempo de envío GL no sostiene el objetivo.
-Cada envío deja además un descanso al menos igual al tiempo de trabajo GL;
-incluso un preset inferior al mínimo de FPS no genera una ráfaga continua de
-render que sature el hilo. Ese presupuesto se adapta por fotograma. Nunca
-cambia resolución, síntesis, prioridades de audio ni parámetros del FIFO. El
+El modo predeterminado fija un objetivo de 60 FPS, sin reducirlo permanentemente
+por una caída puntual. «Sin límite» elimina el temporizador de 60 FPS y respeta
+la sincronización vertical disponible. «720p» limita el lado corto del renderizado
+a 720 píxeles y escala al framebuffer, manteniendo la proporción; no amplía un
+render de tamaño inferior. Las dos opciones se guardan mediante QSettings.
+Los presets y controladores pueden afectar a los FPS y al audio bajo carga.
+El
 mesh de ecuaciones visuales se fija en 32×24; no es el remuestreador de audio.
 
 La pantalla completa es una ventana Qt de presentación: se mueve únicamente el

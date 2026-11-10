@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
+#include <QOpenGLExtraFunctions>
 #include <QOffscreenSurface>
 #include <QSurfaceFormat>
 #include <QDebug>
@@ -51,7 +52,7 @@ void MilkDropWindow::SelectFile(int index) { selectedFile = index; }
 void MilkDropWindow::Navigate(bool previous) { navigation = previous ? -1 : 1; }
 void MilkDropWindow::SetFrameLimit(int limit)
 {
-    frameLimit = limit == -1 ? -1 : limit == 30 ? 30 : limit == 60 ? 60 : 0;
+    frameLimit = limit == -1 ? -1 : 60;
     targetFps = frameLimit > 0 ? frameLimit : 60;
     deadline = 0;
 }
@@ -145,6 +146,7 @@ void MilkDropWindow::Cleanup()
     cleanupSurface.setFormat(context()->format());
     cleanupSurface.create();
     if (!context()->makeCurrent(&cleanupSurface) && isExposed()) makeCurrent();
+    scaleBuffer.reset();
     renderer.Destroy();
     context()->doneCurrent();
     initialized = false;
@@ -186,7 +188,28 @@ void MilkDropWindow::paintGL()
         pcmFrames += result.frames;
         skippedFrames += result.skippedFrames;
         // No publication during pause: feed silence instead of repeating stale PCM.
-        renderer.Render(pcm, framebuffer.width(), framebuffer.height(), targetFps);
+        QSize renderSize = framebuffer;
+        if (reducedResolution && std::min(renderSize.width(), renderSize.height()) > 720)
+            renderSize.scale(renderSize.width() * 720 / std::min(renderSize.width(), renderSize.height()),
+                             renderSize.height() * 720 / std::min(renderSize.width(), renderSize.height()), Qt::KeepAspectRatio);
+        renderResolution = renderSize;
+        if (renderSize != framebuffer && (!scaleBuffer || scaleBuffer->size() != renderSize)) {
+            scaleBuffer = std::make_unique<QOpenGLFramebufferObject>(renderSize);
+            context()->extraFunctions()->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+        renderer.Render(pcm, renderSize.width(), renderSize.height(), targetFps);
+        if (renderSize != framebuffer && scaleBuffer && scaleBuffer->isValid()) {
+            auto *gl = context()->extraFunctions();
+            gl->glDisable(GL_SCISSOR_TEST);
+            gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, scaleBuffer->handle());
+            gl->glBlitFramebuffer(0, 0, renderSize.width(), renderSize.height(), 0, 0, renderSize.width(), renderSize.height(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, scaleBuffer->handle());
+            gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            gl->glBlitFramebuffer(0, 0, renderSize.width(), renderSize.height(), 0, 0, framebuffer.width(), framebuffer.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR);
+            gl->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            gl->glViewport(0, 0, framebuffer.width(), framebuffer.height());
+        }
         const int position = int(renderer.Current());
         if (!paths.isEmpty() && position != lastPosition) {
             lastPosition = position;
@@ -221,8 +244,7 @@ void MilkDropWindow::paintGL()
     if (measurement.elapsed() >= 2000) {
         actualFps = double(intervalFrames) * 1e9 / double(measurement.nsecsElapsed());
         const double averageMs = double(renderNs) / double(intervalFrames) / 1e6;
-        if (!frameLimit && (actualFps < targetFps * 0.7 || averageMs > 1000.0 / targetFps * 0.85))
-            targetFps = FrameCadence::LowerRate(targetFps);
+
         const auto text = QString("%1×%2 · %3 FPS / %4 · CPU submit %5 ms · visual drop %6")
             .arg(framebuffer.width()).arg(framebuffer.height()).arg(actualFps, 0, 'f', 1)
             .arg(targetFps).arg(averageMs, 0, 'f', 1).arg(skippedFrames);
@@ -248,6 +270,7 @@ QJsonObject MilkDropWindow::Diagnostics() const
         {"eglSurfaceSize", nativeSizeQueried},
         {"running", running}, {"initialized", initialized}, {"failed", failed}, {"fps", actualFps},
         {"targetFps", targetFps}, {"width", framebuffer.width()}, {"height", framebuffer.height()},
+        {"renderWidth", renderResolution.width()}, {"renderHeight", renderResolution.height()},
         {"viewportWidth", viewport.width()}, {"viewportHeight", viewport.height()},
         {"logicalWidth", width()}, {"logicalHeight", height()}, {"dpr", devicePixelRatio()}};
 }

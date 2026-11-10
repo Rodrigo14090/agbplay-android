@@ -15,8 +15,8 @@ inline int64_t NextDeadline(int64_t previous, int64_t now, int fps, int64_t work
     const int64_t period = 1000000000LL / std::max(1, fps);
     int64_t deadline = previous ? previous + period : now;
     if (deadline < now - period) deadline = now;
-    // At most half of the submission thread's time goes to rendering. This is
-    // a minimum yield, not a catch-up clock, and never changes PCM buffering.
-    return std::max(deadline, now + std::max<int64_t>(0, workNs));
+    // Missed frames are not replayed; do not add an extra delay after rendering.
+    (void)workNs;
+    return std::max(deadline, now);
 }
 }

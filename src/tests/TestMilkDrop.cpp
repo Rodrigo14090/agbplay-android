@@ -103,6 +103,19 @@ private slots:
         panel.SetFullscreen(true);
         QTRY_VERIFY(panel.Diagnostics()["fullscreen"].toBool());
         QTest::qWait(1000); QTRY_VERIFY(checkSize());
+        surface->SetReducedResolution(true);
+        const int beforeScaled = panel.Diagnostics()["frames"].toInt();
+        QTRY_VERIFY(panel.Diagnostics()["frames"].toInt() > beforeScaled + 2);
+        if (std::min(panel.Diagnostics()["width"].toInt(), panel.Diagnostics()["height"].toInt()) > 720)
+            QCOMPARE(std::min(panel.Diagnostics()["renderWidth"].toInt(), panel.Diagnostics()["renderHeight"].toInt()), 720);
+        const auto scaledImage = surface->grabFramebuffer();
+        QVERIFY(!scaledImage.isNull());
+        bool scaledNonBlack = false;
+        for (int y = 0; y < scaledImage.height() && !scaledNonBlack; y += 8)
+            for (int x = 0; x < scaledImage.width(); x += 8)
+                if ((scaledImage.pixel(x, y) & 0xffffff) != 0) { scaledNonBlack = true; break; }
+        QVERIFY(scaledNonBlack);
+        surface->SetReducedResolution(false);
         QWidget *presentation = nullptr;
         for (auto *widget : QApplication::topLevelWidgets())
             if (widget->objectName() == "milkDropPresentation") presentation = widget;

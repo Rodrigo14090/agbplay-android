@@ -5,6 +5,8 @@
 #include <QJsonObject>
 #include <QOpenGLWindow>
 #include <QTimer>
+#include <QOpenGLFramebufferObject>
+#include <memory>
 #include <functional>
 
 class MilkDropWindow : public QOpenGLWindow
@@ -20,6 +22,7 @@ public:
     void SetFiles(QStringList paths, QString textures);
     void SelectFile(int index);
     void Navigate(bool previous);
+    void SetReducedResolution(bool enabled) { reducedResolution = enabled; }
     void SetFrameLimit(int limit); // 0 = automatic 60 -> 30 -> 20 -> 15
     QJsonObject Diagnostics() const;
 signals:
@@ -54,8 +57,11 @@ private:
     quint64 frames = 0, intervalFrames = 0, skippedFrames = 0, pcmFrames = 0;
     int contexts = 0, presetErrors = 0;
     int frameLimit = 0, targetFps = 60;
+    std::unique_ptr<QOpenGLFramebufferObject> scaleBuffer;
+    bool reducedResolution = false;
     QSize framebuffer;
     QSize viewport;
+    QSize renderResolution;
     double actualFps = 0;
     bool enabled = false, running = false, initialized = false, failed = false, presetPending = false;
     bool nativeSizeQueried = false;

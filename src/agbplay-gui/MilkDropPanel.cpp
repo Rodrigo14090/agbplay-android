@@ -201,8 +201,23 @@ QWidget *MilkDropPanel::MakeControls(bool full)
         auto *unlimited = new QPushButton("Sin límite", row);
         unlimited->setCheckable(true); unlimited->setMinimumHeight(48);
         unlimited->setToolTip("Desactivar el limitador adaptativo de FPS");
-        buttons->addWidget(unlimited);
-        connect(unlimited, &QPushButton::toggled, this, [this](bool enabled) { surface->SetFrameLimit(enabled ? -1 : 0); });
+        auto *scale = new QPushButton("720p", row);
+        scale->setCheckable(true); scale->setMinimumHeight(48);
+        auto *options = new QVBoxLayout;
+        options->setContentsMargins(0, 0, 0, 0);
+        options->addWidget(unlimited); options->addWidget(scale);
+        buttons->addLayout(options);
+        const bool uncapped = QSettings().value("milkdrop/unlimited", false).toBool();
+        const bool reduced = QSettings().value("milkdrop/720p", false).toBool();
+        unlimited->setChecked(uncapped); scale->setChecked(reduced);
+        surface->SetFrameLimit(uncapped ? -1 : 60);
+        surface->SetReducedResolution(reduced);
+        connect(unlimited, &QPushButton::toggled, this, [this](bool enabled) {
+            QSettings().setValue("milkdrop/unlimited", enabled); surface->SetFrameLimit(enabled ? -1 : 60);
+        });
+        connect(scale, &QPushButton::toggled, this, [this](bool enabled) {
+            QSettings().setValue("milkdrop/720p", enabled); surface->SetReducedResolution(enabled);
+        });
         connect(import, &QPushButton::clicked, this, &MilkDropPanel::ImportPreset);
     }
     return row;
