@@ -10,8 +10,8 @@ public final class MilkDropDownloads {
     private static volatile boolean cancelled;
     private MilkDropDownloads() { }
     public static void cancel() { cancelled = true; }
+    public static void prepare() { cancelled = false; }
     public static String download(String address, String destination, long limit) {
-        cancelled = false;
         HttpsURLConnection connection = null;
         try {
             URL url = new URL(address);

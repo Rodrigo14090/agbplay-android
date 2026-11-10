@@ -140,6 +140,9 @@ MilkDropLibrary::~MilkDropLibrary() {
 void MilkDropLibrary::Start(const QString &root)
 {
     if (worker) return;
+#ifdef Q_OS_ANDROID
+    QJniObject::callStaticMethod<void>("org/agbplay/android/MilkDropDownloads", "prepare", "()V");
+#endif
     worker = QThread::create([this, root] {
         auto report = [this](QString text) { QMetaObject::invokeMethod(this, [this, text] { emit status(text); }); };
         try {
